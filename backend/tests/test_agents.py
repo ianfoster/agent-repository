@@ -3,7 +3,42 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from app.main import app
+from app.database import Base, get_db
+
+# Use a separate SQLite DB for tests
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test_agents.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    future=True,
+)
+TestingSessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
+    future=True,
+)
+
+# Create tables for the test DB
+Base.metadata.drop_all(bind=engine)
+Base.metadata.create_all(bind=engine)
+
+
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# Override the dependency in the app
+app.dependency_overrides[get_db] = override_get_db
 
 client = TestClient(app)
 
@@ -34,7 +69,19 @@ def _sample_agent_payload() -> Dict[str, Any]:
                 "required": True
             }
         },
-        "owner": "team-materials"
+        "owner": "team-materials",
+        "a2a_card": {
+            "name": "materials-screening-agent",
+            "url": "http://localhost:8000/a2a/materials-screening-agent",
+            "description": "A2A-compatible materials screening agent.",
+            "version": "1.0.0",
+            "protocolVersion": "0.2.6",
+            "capabilities": {},
+            "skills": [],
+            "defaultInputModes": ["text/plain"],
+            "defaultOutputModes": ["text/plain"],
+            "supportsAuthenticatedExtendedCard": False
+        }
     }
 
 
@@ -51,6 +98,10 @@ def test_create_agent():
     assert data["inputs"]["composition"]["description"] == payload["inputs"]["composition"]["description"]
     assert "created_at" in data
 
+    # A2A card round-trip
+    assert data["a2a_card"]["name"] == payload["a2a_card"]["name"]
+    assert data["a2a_card"]["url"] == payload["a2a_card"]["url"]
+
 
 def test_get_agent_by_id():
     payload = _sample_agent_payload()
@@ -64,6 +115,7 @@ def test_get_agent_by_id():
     fetched = resp2.json()
     assert fetched["id"] == agent_id
     assert fetched["name"] == payload["name"]
+    assert fetched["a2a_card"]["version"] == payload["a2a_card"]["version"]
 
 
 def test_list_agents_and_filter():
@@ -77,6 +129,7 @@ def test_list_agents_and_filter():
     a2["name"] = "simulation-setup-agent"
     a2["tags"] = ["simulation"]
     a2["owner"] = "team-sim"
+    a2["a2a_card"]["name"] = "simulation-setup-agent"
     resp2 = client.post("/agents", json=a2)
     assert resp2.status_code == 201
 
