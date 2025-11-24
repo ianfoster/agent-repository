@@ -1,0 +1,45 @@
+# Minimal agent specification for the Academy Agent Repository
+# Fill in the fields you care about; you can leave others blank.
+# This YAML will be sent directly to POST /agents.
+
+name: example-agent
+version: "0.1.0"
+description: >
+  Short description of what this agent does (e.g., screens materials,
+  sets up simulations, schedules lab experiments).
+
+agent_type: task    # e.g., "task", "domain", "planner", "tool-wrapper"
+tags: ["example", "cli"]
+
+owner: your-team-or-username
+
+# GitHub / code metadata
+git_repo: https://github.com/your-org/your-agent-repo
+git_commit: ""      # optional, you can pin a specific commit SHA
+container_image: "" # e.g., ghcr.io/your-org/your-agent:0.1.0
+entrypoint: ""      # e.g., agents.materials:MaterialsScreeningAgent
+
+# Schema for inputs / outputs (as the backend expects them)
+inputs:
+  parameter:
+    description: "Example input parameter"
+    type: "string"       # string, float, json, file, etc.
+    required: true
+outputs:
+  result:
+    description: "Example result"
+    type: "float"
+    required: true
+
+# Optional A2A Agent Card metadata (simplified)
+a2a_card:
+  name: example-agent
+  url: https://example.org/a2a/example-agent
+  description: Example A2A card for this agent.
+  version: "0.1.0"
+  protocolVersion: "0.2.6"
+  capabilities: {}
+  skills: []
+  defaultInputModes: ["text/plain"]
+  defaultOutputModes: ["text/plain"]
+  supportsAuthenticatedExtendedCard: false
