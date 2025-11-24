@@ -21,7 +21,7 @@ class Agent(Base):
         String(36),
         primary_key=True,
         index=True,
-    )  # store UUID as string for DB portability
+    )
 
     name: Mapped[str] = mapped_column(String(255), index=True)
     version: Mapped[str] = mapped_column(String(50))
@@ -36,6 +36,12 @@ class Agent(Base):
     owner: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
 
     a2a_card: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # GitHub / container metadata
+    git_repo: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    git_commit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    container_image: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    entrypoint: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

@@ -24,6 +24,10 @@ def create_agent(db: Session, agent_in: AgentCreate) -> AgentSpec:
         outputs={k: v.model_dump() for k, v in agent_in.outputs.items()},
         owner=agent_in.owner,
         a2a_card=agent_in.a2a_card.model_dump() if agent_in.a2a_card else None,
+        git_repo=agent_in.git_repo,
+        git_commit=agent_in.git_commit,
+        container_image=agent_in.container_image,
+        entrypoint=agent_in.entrypoint,
     )
     db.add(db_agent)
     db.commit()
@@ -57,7 +61,6 @@ def list_agents(
 
     results = q.all()
 
-    # Tag filter done in Python for portability across DBs.
     if tag is not None:
         results = [a for a in results if a.tags and tag in a.tags]
 

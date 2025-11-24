@@ -80,6 +80,12 @@ class AgentBase(BaseModel):
     # Optional A2A Agent Card metadata
     a2a_card: Optional[A2AAgentCard] = None
 
+    # GitHub / container metadata
+    git_repo: Optional[str] = None
+    git_commit: Optional[str] = None
+    container_image: Optional[str] = None
+    entrypoint: Optional[str] = None
+
 
 class AgentCreate(AgentBase):
     """

@@ -6,8 +6,7 @@ class AgentClient:
     """
     Minimal SDK client for the Academy Agent Repository.
 
-    This will grow as you add endpoints; for now it talks to `/health`
-    and `/agents`.
+    Talks to `/health` and `/agents`.
     """
 
     def __init__(self, base_url: str = "http://localhost:8000", timeout: float = 5.0):
@@ -26,9 +25,6 @@ class AgentClient:
         tag: Optional[str] = None,
         owner: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        List agents from the registry, with optional filters.
-        """
         params: Dict[str, Any] = {}
         if name is not None:
             params["name"] = name
@@ -44,11 +40,6 @@ class AgentClient:
         return resp.json()
 
     def create_agent(self, agent_payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create a new agent in the registry.
-
-        In a production setting, this should be called after external CI/validation.
-        """
         resp = httpx.post(f"{self.base_url}/agents", json=agent_payload, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()

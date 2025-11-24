@@ -24,7 +24,6 @@ TestingSessionLocal = sessionmaker(
     future=True,
 )
 
-# Create tables for the test DB
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
@@ -37,7 +36,6 @@ def override_get_db():
         db.close()
 
 
-# Override the dependency in the app
 app.dependency_overrides[get_db] = override_get_db
 
 client = TestClient(app)
@@ -81,7 +79,11 @@ def _sample_agent_payload() -> Dict[str, Any]:
             "defaultInputModes": ["text/plain"],
             "defaultOutputModes": ["text/plain"],
             "supportsAuthenticatedExtendedCard": False
-        }
+        },
+        "git_repo": "https://github.com/example/materials-agent",
+        "git_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "container_image": "ghcr.io/example/materials-agent:1.0.0",
+        "entrypoint": "agents.materials:MaterialsScreeningAgent"
     }
 
 
@@ -102,6 +104,12 @@ def test_create_agent():
     assert data["a2a_card"]["name"] == payload["a2a_card"]["name"]
     assert data["a2a_card"]["url"] == payload["a2a_card"]["url"]
 
+    # GitHub / container metadata round-trip
+    assert data["git_repo"] == payload["git_repo"]
+    assert data["git_commit"] == payload["git_commit"]
+    assert data["container_image"] == payload["container_image"]
+    assert data["entrypoint"] == payload["entrypoint"]
+
 
 def test_get_agent_by_id():
     payload = _sample_agent_payload()
@@ -116,6 +124,7 @@ def test_get_agent_by_id():
     assert fetched["id"] == agent_id
     assert fetched["name"] == payload["name"]
     assert fetched["a2a_card"]["version"] == payload["a2a_card"]["version"]
+    assert fetched["git_repo"] == payload["git_repo"]
 
 
 def test_list_agents_and_filter():
@@ -130,6 +139,7 @@ def test_list_agents_and_filter():
     a2["tags"] = ["simulation"]
     a2["owner"] = "team-sim"
     a2["a2a_card"]["name"] = "simulation-setup-agent"
+    a2["git_repo"] = "https://github.com/example/sim-agent"
     resp2 = client.post("/agents", json=a2)
     assert resp2.status_code == 201
 
