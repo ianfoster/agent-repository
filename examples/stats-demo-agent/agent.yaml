@@ -1,0 +1,50 @@
+name: stats-demo-agent
+version: "0.1.0"
+description: >
+  Demo agent that computes simple statistics (count, mean, min, max)
+  over a list of numeric values.
+
+agent_type: task
+tags: ["example", "demo", "stats"]
+owner: "ian"
+
+git_repo: "https://github.com/ianfoster/agent-repository"
+git_commit: ""      # optional; can be left empty to use HEAD
+container_image: "" # not used yet
+entrypoint: "agents_demo.stats_agent:StatsDemoAgent"
+
+inputs:
+  values:
+    description: "List of numeric values"
+    type: "json"
+    required: true
+
+outputs:
+  count:
+    description: "Number of values"
+    type: "float"
+    required: true
+  mean:
+    description: "Mean of the values"
+    type: "float"
+    required: true
+  min:
+    description: "Minimum value"
+    type: "float"
+    required: true
+  max:
+    description: "Maximum value"
+    type: "float"
+    required: true
+
+a2a_card:
+  name: "stats-demo-agent"
+  url: "https://github.com/ianfoster/agent-repository/tree/main/examples/stats-demo-agent"
+  description: "Demo agent that computes basic statistics from a JSON list of numbers."
+  version: "0.1.0"
+  protocolVersion: "0.2.6"
+  capabilities: {}
+  skills: []
+  defaultInputModes: ["application/json"]
+  defaultOutputModes: ["application/json"]
+  supportsAuthenticatedExtendedCard: false

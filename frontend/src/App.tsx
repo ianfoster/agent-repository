@@ -14,6 +14,8 @@ const App: React.FC = () => {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [lastRunOutputs, setLastRunOutputs] = useState<any | null>(null);
+  const [inputsJson, setInputsJson] = useState<string>("{}");
+  const [inputsError, setInputsError] = useState<string | null>(null);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsError, setAgentsError] = useState<string | null>(null);
@@ -150,18 +152,39 @@ const App: React.FC = () => {
 
   const handleDeploySelected = async () => {
     if (!selectedAgentId) return;
+  
+    // Parse JSON from textarea
+    let parsedInputs: any = {};
+    try {
+      if (inputsJson.trim()) {
+        const parsed = JSON.parse(inputsJson);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new Error("Inputs JSON must be a JSON object (e.g. {\"name\": \"Ian\"}).");
+        }
+        parsedInputs = parsed;
+      }
+      setInputsError(null);
+    } catch (err: any) {
+      setInputsError(
+        err?.message ??
+          "Failed to parse JSON. Ensure it is a valid JSON object (e.g. {\"key\": \"value\"})."
+      );
+      return;
+    }
+  
     try {
       setDeploying(true);
-      // For now, we don't have a UI for inputs, so send an empty object.
-      const result = await runAgent(selectedAgentId, deployTarget || "local-ui", {});
-      // Save outputs from the agent run
+      const result = await runAgent(
+        selectedAgentId,
+        deployTarget || "local-ui",
+        parsedInputs
+      );
       setLastRunOutputs(result.outputs);
-
-      // If a deployment was recorded, update the deployments list
+  
       if (result.deployment) {
         setDeployments((prev) => [result.deployment!, ...prev]);
       }
-
+  
       setDeploymentsError(null);
     } catch (err: any) {
       setDeploymentsError(err.message ?? String(err));
@@ -753,40 +776,86 @@ const App: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Deploy section */}
+                {/* Deploy section + JSON inputs */}
                 <div style={{ marginBottom: "0.75rem" }}>
-                  <strong>Deploy:</strong>{" "}
-                  <input
-                    type="text"
-                    value={deployTarget}
-                    onChange={(e) => setDeployTarget(e.target.value)}
-                    placeholder="target (e.g. dev, hpc, lab-node-1)"
+                  <strong>Deploy / Run locally:</strong>
+                
+                  <div
                     style={{
-                      marginLeft: "0.5rem",
-                      padding: "0.15rem 0.4rem",
-                      fontSize: "0.8rem",
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleDeploySelected}
-                    disabled={deploying}
-                    style={{
-                      marginLeft: "0.5rem",
-                      padding: "0.2rem 0.6rem",
-                      borderRadius: "0.4rem",
-                      border: "1px solid #444",
-                      background: deploying ? "#eee" : "#fff",
-                      cursor: deploying ? "default" : "pointer",
-                      fontSize: "0.8rem",
+                      marginTop: "0.25rem",
+                      display: "flex",
+                      gap: "0.5rem",
+                      alignItems: "center",
+                      flexWrap: "wrap"
                     }}
                   >
-                    {deploying ? "Deploying…" : "Create deployment"}
-                  </button>
-                  {deploymentsError && (
-                    <div style={{ color: "red", marginTop: "0.25rem" }}>
-                      {deploymentsError}
+                    <span>Target:</span>
+                    <input
+                      type="text"
+                      value={deployTarget}
+                      onChange={(e) => setDeployTarget(e.target.value)}
+                      placeholder="e.g. local-ui, dev, hpc"
+                      style={{
+                        padding: "0.15rem 0.4rem",
+                        fontSize: "0.8rem",
+                        minWidth: "10rem"
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleDeploySelected}
+                      disabled={deploying}
+                      style={{
+                        padding: "0.2rem 0.6rem",
+                        borderRadius: "0.4rem",
+                        border: "1px solid #444",
+                        background: deploying ? "#eee" : "#fff",
+                        cursor: deploying ? "default" : "pointer",
+                        fontSize: "0.8rem"
+                      }}
+                    >
+                      {deploying ? "Running…" : "Run agent"}
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <div
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "#555",
+                        marginBottom: "0.25rem",
+                      }}
+                    >
+                      <strong>Run inputs (JSON):</strong> (must be a JSON object, e.g.
+                      <code>{" { \"name\": \"Ian\" }"}</code> or
+                      <code>{" { \"values\": [1,2,3] }"}</code>)
                     </div>
+                    <textarea
+                      value={inputsJson}
+                      onChange={(e) => {
+                        setInputsJson(e.target.value);
+                        setInputsError(null);
+                      }}
+                      rows={6}
+                      style={{
+                        width: "100%",
+                        fontFamily: "monospace",
+                        fontSize: "0.8rem",
+                        padding: "0.4rem",
+                        borderRadius: "0.25rem",
+                        border: "1px solid #ccc",
+                        resize: "vertical"
+                      }}
+                    />
+                    {inputsError && (
+                      <div style={{ color: "red", fontSize: "0.8rem", marginTop: "0.25rem" }}>
+                        {inputsError}
+                      </div>
+                    )}
+                  </div>
+                
+                  {deploymentsError && (
+                    <div style={{ color: "red", marginTop: "0.25rem" }}>{deploymentsError}</div>
                   )}
                 </div>
 
