@@ -94,3 +94,37 @@ def test_client_health_live():
     data = client.health()
     assert data["status"] == "ok"
 
+def test_validate_agent_uses_httpx_post(monkeypatch):
+    called: Dict[str, Any] = {}
+
+    def fake_post(url: str, params: Dict[str, Any] | None, timeout: float):
+        called["url"] = url
+        called["params"] = params
+        called["timeout"] = timeout
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> Dict[str, Any]:
+                return {
+                    "id": "abc-123",
+                    "validation_status": "validated",
+                    "validation_score": 0.95,
+                }
+
+        return FakeResponse()
+
+    monkeypatch.setattr("academy_agents.client.httpx.post", fake_post)
+
+    client = AgentClient(base_url="http://example.org", timeout=2.5)
+    result = client.validate_agent("abc-123", score=0.95)
+
+    assert result["validation_status"] == "validated"
+    assert result["validation_score"] == 0.95
+    assert called["url"] == "http://example.org/agents/abc-123/validate"
+    assert called["params"]["score"] == 0.95
+    assert called["timeout"] == 2.5
+

@@ -37,6 +37,9 @@ export type Agent = {
   git_commit?: string | null;
   container_image?: string | null;
   entrypoint?: string | null;
+  validation_status: string;
+  last_validated_at?: string | null;
+  validation_score?: number | null;
 };
 
 export type HealthResponse = {
@@ -121,6 +124,27 @@ export async function createSampleAgent(): Promise<Agent> {
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Failed to create agent: ${resp.status} ${text}`);
+  }
+
+  return resp.json();
+}
+
+
+export async function validateAgent(id: string, score?: number): Promise<Agent> {
+  const params = new URLSearchParams();
+  if (typeof score === "number") {
+    params.set("score", String(score));
+  }
+  const query = params.toString();
+  const url = query ? `/api/agents/${id}/validate?${query}` : `/api/agents/${id}/validate`;
+
+  const resp = await fetch(url, {
+    method: "POST"
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Failed to validate agent: ${resp.status} ${text}`);
   }
 
   return resp.json();

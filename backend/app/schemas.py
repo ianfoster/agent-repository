@@ -85,6 +85,11 @@ class AgentBase(BaseModel):
     git_commit: Optional[str] = None
     container_image: Optional[str] = None
     entrypoint: Optional[str] = None
+    # Validation / evaluation metadata
+    validation_status: str = "unvalidated"  # "unvalidated", "validated", "failed", etc.
+    last_validated_at: Optional[datetime] = None
+    validation_score: Optional[float] = None
+
 
 
 class AgentCreate(AgentBase):

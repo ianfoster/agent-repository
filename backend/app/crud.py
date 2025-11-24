@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 
 from typing import List, Optional
 from uuid import uuid4
@@ -28,6 +29,9 @@ def create_agent(db: Session, agent_in: AgentCreate) -> AgentSpec:
         git_commit=agent_in.git_commit,
         container_image=agent_in.container_image,
         entrypoint=agent_in.entrypoint,
+        validation_status=agent_in.validation_status or "unvalidated",
+        last_validated_at=agent_in.last_validated_at,
+        validation_score=agent_in.validation_score,
     )
     db.add(db_agent)
     db.commit()
@@ -65,4 +69,23 @@ def list_agents(
         results = [a for a in results if a.tags and tag in a.tags]
 
     return [AgentSpec.model_validate(a) for a in results]
+
+def validate_agent(
+    db: Session,
+    agent_id: str,
+    score: Optional[float] = None,
+) -> Optional[AgentSpec]:
+    """
+    Mark an agent as validated and update validation metadata.
+    """
+    obj = db.get(models.Agent, agent_id)
+    if obj is None:
+        return None
+    obj.validation_status = "validated"
+    obj.last_validated_at = datetime.utcnow()
+    if score is not None:
+        obj.validation_score = score
+    db.commit()
+    db.refresh(obj)
+    return AgentSpec.model_validate(obj)
 

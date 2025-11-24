@@ -110,6 +110,12 @@ def test_create_agent():
     assert data["container_image"] == payload["container_image"]
     assert data["entrypoint"] == payload["entrypoint"]
 
+    # Validation defaults
+    assert data["validation_status"] == "unvalidated"
+    assert data["last_validated_at"] is None
+    assert data["validation_score"] is None
+
+
 
 def test_get_agent_by_id():
     payload = _sample_agent_payload()
@@ -163,4 +169,26 @@ def test_get_agent_not_found():
     resp = client.get("/agents/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Agent not found"
+
+
+def test_validate_agent_updates_status_and_score():
+    payload = _sample_agent_payload()
+    resp = client.post("/agents", json=payload)
+    assert resp.status_code == 201
+    created = resp.json()
+    agent_id = created["id"]
+
+    # Initially unvalidated
+    assert created["validation_status"] == "unvalidated"
+    assert created["last_validated_at"] is None
+    assert created["validation_score"] is None
+
+    # Validate with a score
+    resp2 = client.post(f"/agents/{agent_id}/validate", params={"score": 0.9})
+    assert resp2.status_code == 200
+    validated = resp2.json()
+
+    assert validated["validation_status"] == "validated"
+    assert validated["validation_score"] == 0.9
+    assert validated["last_validated_at"] is not None
 

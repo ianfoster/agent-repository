@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Optional
 
-from sqlalchemy import DateTime, JSON, String, Text
+from sqlalchemy import DateTime, JSON, String, Text, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -42,6 +42,11 @@ class Agent(Base):
     git_commit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     container_image: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     entrypoint: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+
+    # Validation / evaluation metadata
+    validation_status: Mapped[str] = mapped_column(String(32), default="unvalidated", nullable=False)
+    last_validated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    validation_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

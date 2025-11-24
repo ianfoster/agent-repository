@@ -1,6 +1,12 @@
 import React, { useEffect, useState, FormEvent } from "react";
 import type { Agent, AgentFilters, HealthResponse } from "./api";
-import { fetchHealth, fetchAgents, fetchAgent, createSampleAgent } from "./api";
+import {
+  fetchHealth,
+  fetchAgents,
+  fetchAgent,
+  createSampleAgent,
+  validateAgent,
+} from "./api";
 
 const App: React.FC = () => {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -11,18 +17,25 @@ const App: React.FC = () => {
   const [agentsLoading, setAgentsLoading] = useState(false);
 
   const [creating, setCreating] = useState(false);
+  const [validating, setValidating] = useState(false);
 
   const [filters, setFilters] = useState<AgentFilters>({
     name: "",
     agent_type: "",
     tag: "",
-    owner: ""
+    owner: "",
   });
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [selectedAgentError, setSelectedAgentError] = useState<string | null>(null);
+  const [selectedAgentError, setSelectedAgentError] = useState<string | null>(
+    null
+  );
   const [selectedLoading, setSelectedLoading] = useState(false);
+
+  const [copyIdStatus, setCopyIdStatus] = useState<
+    "idle" | "copied" | "error"
+  >("idle");
 
   // Initial load
   useEffect(() => {
@@ -48,23 +61,22 @@ const App: React.FC = () => {
 
   const handleFilterChange = (
     e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  ): void => {
     const { name, value } = e.target;
     setFilters((prev) => ({
       ...prev,
-      [name]: value
+      [name]: value,
     }));
   };
 
   const handleFilterSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const nonEmptyFilters: AgentFilters = {};
-    if (filters.name) nonEmptyFilters.name = filters.name;
-    if (filters.agent_type) nonEmptyFilters.agent_type = filters.agent_type;
-    if (filters.tag) nonEmptyFilters.tag = filters.tag;
-    if (filters.owner) nonEmptyFilters.owner = filters.owner;
-    await loadAgents(nonEmptyFilters);
-    // Clear selection when filters change
+    const nonEmpty: AgentFilters = {};
+    if (filters.name) nonEmpty.name = filters.name;
+    if (filters.agent_type) nonEmpty.agent_type = filters.agent_type;
+    if (filters.tag) nonEmpty.tag = filters.tag;
+    if (filters.owner) nonEmpty.owner = filters.owner;
+    await loadAgents(nonEmpty);
     setSelectedAgentId(null);
     setSelectedAgent(null);
     setSelectedAgentError(null);
@@ -75,7 +87,7 @@ const App: React.FC = () => {
       name: "",
       agent_type: "",
       tag: "",
-      owner: ""
+      owner: "",
     });
     await loadAgents();
     setSelectedAgentId(null);
@@ -112,18 +124,53 @@ const App: React.FC = () => {
     }
   };
 
+  const handleValidateSelected = async () => {
+    if (!selectedAgentId) return;
+    try {
+      setValidating(true);
+      const updated = await validateAgent(selectedAgentId);
+      setSelectedAgent(updated);
+      setAgents((prev) =>
+        prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
+      );
+      setSelectedAgentError(null);
+    } catch (err: any) {
+      setSelectedAgentError(err.message ?? String(err));
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const handleCopyId = async () => {
+    if (!selectedAgent) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(selectedAgent.id);
+        setCopyIdStatus("copied");
+        setTimeout(() => setCopyIdStatus("idle"), 1500);
+      } else {
+        setCopyIdStatus("error");
+        setTimeout(() => setCopyIdStatus("idle"), 1500);
+      }
+    } catch {
+      setCopyIdStatus("error");
+      setTimeout(() => setCopyIdStatus("idle"), 1500);
+    }
+  };
+
   return (
     <div
       style={{
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
         padding: "1.5rem",
         maxWidth: "1200px",
-        margin: "0 auto"
+        margin: "0 auto",
       }}
     >
       <h1>Academy Agent Repository</h1>
       <p style={{ color: "#555", marginBottom: "1rem" }}>
-        Browse, search, and inspect agents (including A2A Agent Card and GitHub/container metadata).
+        Browse, search, and inspect agents (including A2A Agent Card and
+        GitHub/container metadata).
       </p>
 
       {/* Health section */}
@@ -132,7 +179,7 @@ const App: React.FC = () => {
           marginTop: "0.5rem",
           padding: "1rem",
           borderRadius: "0.5rem",
-          border: "1px solid #ddd"
+          border: "1px solid #ddd",
         }}
       >
         <h2>Backend health</h2>
@@ -143,7 +190,7 @@ const App: React.FC = () => {
               background: "#f7f7f7",
               padding: "0.5rem",
               borderRadius: "0.25rem",
-              fontSize: "0.85rem"
+              fontSize: "0.85rem",
             }}
           >
             {JSON.stringify(health, null, 2)}
@@ -159,7 +206,7 @@ const App: React.FC = () => {
           marginTop: "1.5rem",
           padding: "1rem",
           borderRadius: "0.5rem",
-          border: "1px solid #ddd"
+          border: "1px solid #ddd",
         }}
       >
         <div
@@ -168,7 +215,7 @@ const App: React.FC = () => {
             justifyContent: "space-between",
             gap: "1rem",
             alignItems: "center",
-            marginBottom: "0.75rem"
+            marginBottom: "0.75rem",
           }}
         >
           <h2 style={{ margin: 0 }}>Agents</h2>
@@ -180,7 +227,7 @@ const App: React.FC = () => {
               borderRadius: "0.4rem",
               border: "1px solid #444",
               background: creating ? "#eee" : "#fff",
-              cursor: creating ? "default" : "pointer"
+              cursor: creating ? "default" : "pointer",
             }}
           >
             {creating ? "Creating…" : "Create sample agent"}
@@ -195,11 +242,17 @@ const App: React.FC = () => {
             gridTemplateColumns: "repeat(4, minmax(0, 1fr)) auto",
             gap: "0.5rem",
             alignItems: "end",
-            marginBottom: "0.75rem"
+            marginBottom: "0.75rem",
           }}
         >
           <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                color: "#555",
+              }}
+            >
               Name
             </label>
             <input
@@ -212,7 +265,13 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                color: "#555",
+              }}
+            >
               Type
             </label>
             <input
@@ -225,7 +284,13 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                color: "#555",
+              }}
+            >
               Tag
             </label>
             <input
@@ -238,7 +303,13 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                color: "#555",
+              }}
+            >
               Owner
             </label>
             <input
@@ -259,7 +330,7 @@ const App: React.FC = () => {
                 border: "1px solid #444",
                 background: "#f5f5f5",
                 cursor: "pointer",
-                fontSize: "0.85rem"
+                fontSize: "0.85rem",
               }}
             >
               Apply
@@ -273,7 +344,7 @@ const App: React.FC = () => {
                 border: "1px solid #ccc",
                 background: "#fff",
                 cursor: "pointer",
-                fontSize: "0.85rem"
+                fontSize: "0.85rem",
               }}
             >
               Clear
@@ -282,14 +353,16 @@ const App: React.FC = () => {
         </form>
 
         {agentsError && (
-          <p style={{ color: "red", marginBottom: "0.5rem" }}>Error: {agentsError}</p>
+          <p style={{ color: "red", marginBottom: "0.5rem" }}>
+            Error: {agentsError}
+          </p>
         )}
 
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
-            gap: "1rem"
+            gap: "1rem",
           }}
         >
           {/* Agents list */}
@@ -303,16 +376,67 @@ const App: React.FC = () => {
                 style={{
                   width: "100%",
                   borderCollapse: "collapse",
-                  fontSize: "0.9rem"
+                  fontSize: "0.9rem",
                 }}
               >
                 <thead>
                   <tr>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>Name</th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>Version</th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>Type</th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>Owner</th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>Tags</th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Name
+                    </th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Version
+                    </th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Type
+                    </th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Owner
+                    </th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Status
+                    </th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Links
+                    </th>
+                    <th
+                      style={{
+                        borderBottom: "1px solid #ccc",
+                        textAlign: "left",
+                      }}
+                    >
+                      Tags
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -324,22 +448,115 @@ const App: React.FC = () => {
                         onClick={() => handleSelectAgent(agent)}
                         style={{
                           cursor: "pointer",
-                          background: isSelected ? "#eef5ff" : "transparent"
+                          background: isSelected ? "#eef5ff" : "transparent",
                         }}
                       >
-                        <td style={{ borderBottom: "1px solid #eee", padding: "0.25rem 0.2rem" }}>
+                        {/* Name */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
                           {agent.name}
                         </td>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "0.25rem 0.2rem" }}>
+
+                        {/* Version */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
                           {agent.version}
                         </td>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "0.25rem 0.2rem" }}>
+
+                        {/* Type */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
                           {agent.agent_type}
                         </td>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "0.25rem 0.2rem" }}>
+
+                        {/* Owner */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
                           {agent.owner ?? "—"}
                         </td>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "0.25rem 0.2rem" }}>
+
+                        {/* Validation status */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
+                          <span
+                            style={{
+                              padding: "0.1rem 0.4rem",
+                              borderRadius: "0.75rem",
+                              border: "1px solid #ccc",
+                              fontSize: "0.75rem",
+                              background:
+                                agent.validation_status === "validated"
+                                  ? "#e6ffed"
+                                  : agent.validation_status === "failed"
+                                  ? "#ffe5e5"
+                                  : "#fff4e5",
+                            }}
+                          >
+                            {agent.validation_status}
+                          </span>
+                        </td>
+
+                        {/* Links */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
+                          {agent.git_repo && (
+                            <a
+                              href={agent.git_repo}
+                              title="GitHub repo"
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              style={{
+                                marginRight: "0.4rem",
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              GH
+                            </a>
+                          )}
+                          {agent.container_image && (
+                            <span
+                              title={agent.container_image}
+                              style={{ fontSize: "0.8rem", color: "#555" }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              🐳
+                            </span>
+                          )}
+                          {!agent.git_repo && !agent.container_image && "—"}
+                        </td>
+
+                        {/* Tags */}
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
                           {agent.tags?.join(", ") || "—"}
                         </td>
                       </tr>
@@ -355,7 +572,7 @@ const App: React.FC = () => {
             style={{
               borderLeft: "1px solid #eee",
               paddingLeft: "1rem",
-              minHeight: "6rem"
+              minHeight: "6rem",
             }}
           >
             <h3 style={{ marginTop: 0 }}>Agent detail</h3>
@@ -372,24 +589,115 @@ const App: React.FC = () => {
                   fontSize: "0.9rem",
                   lineHeight: 1.4,
                   maxHeight: "28rem",
-                  overflow: "auto"
+                  overflow: "auto",
                 }}
               >
                 <h4 style={{ margin: "0 0 0.25rem 0" }}>
-                  {selectedAgent.name} <span style={{ color: "#666" }}>v{selectedAgent.version}</span>
+                  {selectedAgent.name}{" "}
+                  <span style={{ color: "#666" }}>v{selectedAgent.version}</span>
                 </h4>
+
+                {/* ID + copy button */}
+                <div
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "#666",
+                    marginBottom: "0.35rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                  }}
+                >
+                  <span>
+                    <strong>ID:</strong> {selectedAgent.id}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyId}
+                    style={{
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: "0.4rem",
+                      border: "1px solid #ccc",
+                      background: "#f8f8f8",
+                      fontSize: "0.75rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {copyIdStatus === "copied"
+                      ? "Copied!"
+                      : copyIdStatus === "error"
+                      ? "Copy failed"
+                      : "Copy ID"}
+                  </button>
+                </div>
+
                 <p style={{ margin: "0 0 0.5rem 0", color: "#444" }}>
                   {selectedAgent.description}
                 </p>
 
+                {/* Basic info + validation badge */}
                 <div style={{ marginBottom: "0.5rem" }}>
                   <strong>Type:</strong> {selectedAgent.agent_type}{" "}
                   <strong style={{ marginLeft: "0.75rem" }}>Owner:</strong>{" "}
                   {selectedAgent.owner ?? "—"}{" "}
                   <strong style={{ marginLeft: "0.75rem" }}>Created:</strong>{" "}
                   {new Date(selectedAgent.created_at).toLocaleString()}
+                  <br />
+                  <strong>Validation:</strong>{" "}
+                  <span
+                    style={{
+                      padding: "0.1rem 0.4rem",
+                      borderRadius: "0.75rem",
+                      border: "1px solid #ccc",
+                      fontSize: "0.8rem",
+                      background:
+                        selectedAgent.validation_status === "validated"
+                          ? "#e6ffed"
+                          : "#fff4e5",
+                    }}
+                  >
+                    {selectedAgent.validation_status}
+                  </span>
+                  {selectedAgent.last_validated_at && (
+                    <>
+                      {" "}
+                      <span style={{ color: "#666", marginLeft: "0.5rem" }}>
+                        (last:{" "}
+                        {new Date(
+                          selectedAgent.last_validated_at
+                        ).toLocaleString()}
+                        )
+                      </span>
+                    </>
+                  )}
                 </div>
 
+                {/* Validation score + button */}
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <strong>Validation score:</strong>{" "}
+                  {typeof selectedAgent.validation_score === "number"
+                    ? selectedAgent.validation_score.toFixed(3)
+                    : "—"}
+                  {"  "}
+                  <button
+                    type="button"
+                    onClick={handleValidateSelected}
+                    disabled={validating}
+                    style={{
+                      marginLeft: "0.75rem",
+                      padding: "0.2rem 0.6rem",
+                      borderRadius: "0.4rem",
+                      border: "1px solid #444",
+                      background: validating ? "#eee" : "#fff",
+                      cursor: validating ? "default" : "pointer",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    {validating ? "Validating…" : "Mark as validated"}
+                  </button>
+                </div>
+
+                {/* Tags */}
                 <div style={{ marginBottom: "0.5rem" }}>
                   <strong>Tags:</strong>{" "}
                   {selectedAgent.tags && selectedAgent.tags.length > 0
@@ -401,15 +709,18 @@ const App: React.FC = () => {
                 <div style={{ marginBottom: "0.5rem" }}>
                   <strong>Git repo:</strong>{" "}
                   {selectedAgent.git_repo ? (
-                    <a href={selectedAgent.git_repo} target="_blank" rel="noreferrer">
+                    <a
+                      href={selectedAgent.git_repo}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {selectedAgent.git_repo}
                     </a>
                   ) : (
                     "—"
                   )}
                   <br />
-                  <strong>Commit:</strong>{" "}
-                  {selectedAgent.git_commit ?? "—"}
+                  <strong>Commit:</strong> {selectedAgent.git_commit ?? "—"}
                   <br />
                   <strong>Container image:</strong>{" "}
                   {selectedAgent.container_image ?? "—"}
@@ -424,7 +735,8 @@ const App: React.FC = () => {
                   {selectedAgent.a2a_card ? (
                     <>
                       <div>
-                        <strong>Name:</strong> {selectedAgent.a2a_card.name}
+                        <strong>Name:</strong>{" "}
+                        {selectedAgent.a2a_card.name}
                       </div>
                       <div>
                         <strong>URL:</strong>{" "}
@@ -437,7 +749,8 @@ const App: React.FC = () => {
                         </a>
                       </div>
                       <div>
-                        <strong>Version:</strong> {selectedAgent.a2a_card.version}
+                        <strong>Version:</strong>{" "}
+                        {selectedAgent.a2a_card.version}
                       </div>
                       <div>
                         <strong>Default I/O:</strong>{" "}
@@ -467,7 +780,7 @@ const App: React.FC = () => {
                       padding: "0.5rem",
                       borderRadius: "0.25rem",
                       fontSize: "0.8rem",
-                      marginTop: "0.25rem"
+                      marginTop: "0.25rem",
                     }}
                   >
                     {JSON.stringify(selectedAgent, null, 2)}

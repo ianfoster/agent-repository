@@ -44,3 +44,19 @@ class AgentClient:
         resp.raise_for_status()
         return resp.json()
 
+    def validate_agent(self, agent_id: str, score: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Mark an agent as validated, optionally with a validation score.
+        """
+        params: Dict[str, Any] = {}
+        if score is not None:
+            params["score"] = score
+
+        resp = httpx.post(
+            f"{self.base_url}/agents/{agent_id}/validate",
+            params=params or None,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+

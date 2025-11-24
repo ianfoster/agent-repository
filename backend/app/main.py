@@ -66,3 +66,21 @@ def get_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentSpec:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
 
+@app.post("/agents/{agent_id}/validate", response_model=AgentSpec)
+def validate_agent(
+    agent_id: UUID,
+    score: Optional[float] = Query(default=None, description="Optional validation score"),
+    db: Session = Depends(get_db),
+) -> AgentSpec:
+    """
+    Mark an agent as validated and optionally set a validation score.
+
+    In a full system, this endpoint would be called by a validation/evaluation
+    service after running tests and benchmarks. For now it simply updates
+    validation_status, last_validated_at, and optionally validation_score.
+    """
+    validated = crud.validate_agent(db, str(agent_id), score=score)
+    if validated is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return validated
+
