@@ -6,7 +6,7 @@ import {
   fetchAgent,
   createSampleAgent,
   validateAgent,
-  deployAgent,
+  runAgent,
   fetchDeployments,
 } from "./api";
 
