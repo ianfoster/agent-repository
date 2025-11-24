@@ -6,7 +6,8 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from .schemas import AgentSpec, AgentCreate
+from .schemas import AgentSpec, AgentCreate, Deployment, DeploymentCreate, RunRequest, RunResult
+from .runner import run_agent_locally
 from .database import Base, engine, get_db
 from . import crud
 
@@ -66,6 +67,7 @@ def get_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentSpec:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
 
+
 @app.post("/agents/{agent_id}/validate", response_model=AgentSpec)
 def validate_agent(
     agent_id: UUID,
@@ -74,13 +76,79 @@ def validate_agent(
 ) -> AgentSpec:
     """
     Mark an agent as validated and optionally set a validation score.
-
-    In a full system, this endpoint would be called by a validation/evaluation
-    service after running tests and benchmarks. For now it simply updates
-    validation_status, last_validated_at, and optionally validation_score.
     """
     validated = crud.validate_agent(db, str(agent_id), score=score)
     if validated is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return validated
 
+
+# ----------------------------------------------------------------------
+# Deployment stubs
+# ----------------------------------------------------------------------
+
+
+@app.post("/agents/{agent_id}/deploy", response_model=Deployment, status_code=201)
+def deploy_agent(
+    agent_id: UUID,
+    payload: DeploymentCreate,
+    db: Session = Depends(get_db),
+) -> Deployment:
+    """
+    Create a stub deployment record for an agent.
+
+    This does not actually run anything; it simply records that an agent
+    was asked to be deployed to a given target.
+    """
+    dep = crud.create_deployment(db, str(agent_id), payload)
+    if dep is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return dep
+
+
+@app.get("/agents/{agent_id}/deployments", response_model=List[Deployment])
+def list_deployments(
+    agent_id: UUID,
+    db: Session = Depends(get_db),
+) -> List[Deployment]:
+    """
+    List recent deployments for an agent.
+    """
+    return crud.list_deployments_for_agent(db, str(agent_id))
+
+
+@app.post("/agents/{agent_id}/run", response_model=RunResult)
+def run_agent(
+    agent_id: UUID,
+    payload: RunRequest,
+    db: Session = Depends(get_db),
+) -> RunResult:
+    """
+    Execute an agent implementation locally on the backend host.
+
+    This:
+      1. fetches the agent spec
+      2. clones/updates git_repo
+      3. imports the entrypoint
+      4. calls run(**inputs)
+      5. records a stub Deployment with the requested target
+      6. returns outputs + deployment
+    """
+    agent = crud.get_agent(db, str(agent_id))
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        outputs = run_agent_locally(agent, payload)
+    except Exception as e:
+        # You might want more structured error handling/logging later
+        raise HTTPException(status_code=500, detail=f"Agent run failed: {e}") from e
+
+    # Record a deployment stub
+    dep = crud.create_deployment(
+        db,
+        str(agent_id),
+        DeploymentCreate(target=payload.target),
+    )
+
+    return RunResult(outputs=outputs, deployment=dep)

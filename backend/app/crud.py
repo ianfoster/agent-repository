@@ -1,13 +1,18 @@
 from __future__ import annotations
-from datetime import datetime
 
+from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
 from . import models
-from .schemas import AgentCreate, AgentSpec
+from .schemas import AgentCreate, AgentSpec, Deployment, DeploymentCreate
+
+
+# ----------------------------------------------------------------------
+# Agents
+# ----------------------------------------------------------------------
 
 
 def create_agent(db: Session, agent_in: AgentCreate) -> AgentSpec:
@@ -70,6 +75,7 @@ def list_agents(
 
     return [AgentSpec.model_validate(a) for a in results]
 
+
 def validate_agent(
     db: Session,
     agent_id: str,
@@ -88,4 +94,44 @@ def validate_agent(
     db.commit()
     db.refresh(obj)
     return AgentSpec.model_validate(obj)
+
+
+# ----------------------------------------------------------------------
+# Deployments
+# ----------------------------------------------------------------------
+
+
+def create_deployment(
+    db: Session,
+    agent_id: str,
+    deployment_in: DeploymentCreate,
+) -> Optional[Deployment]:
+    """
+    Create a deployment record for an agent.
+
+    Returns None if the agent does not exist.
+    """
+    # Ensure agent exists
+    agent = db.get(models.Agent, agent_id)
+    if agent is None:
+        return None
+
+    db_dep = models.Deployment(
+        id=str(uuid4()),
+        agent_id=agent_id,
+        target=deployment_in.target,
+        status="requested",
+    )
+    db.add(db_dep)
+    db.commit()
+    db.refresh(db_dep)
+
+    return Deployment.model_validate(db_dep)
+
+
+def list_deployments_for_agent(db: Session, agent_id: str) -> List[Deployment]:
+    q = db.query(models.Deployment).filter(models.Deployment.agent_id == agent_id)
+    q = q.order_by(models.Deployment.created_at.desc())
+    deps = q.all()
+    return [Deployment.model_validate(d) for d in deps]
 

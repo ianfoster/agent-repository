@@ -42,6 +42,14 @@ export type Agent = {
   validation_score?: number | null;
 };
 
+export type Deployment = {
+  id: string;
+  agent_id: string;
+  target: string;
+  status: string;
+  created_at: string;
+};
+
 export type HealthResponse = {
   status: string;
   service: string;
@@ -52,6 +60,19 @@ export type AgentFilters = {
   agent_type?: string;
   tag?: string;
   owner?: string;
+};
+
+export type Deployment = {
+  id: string;
+  agent_id: string;
+  target: string;
+  status: string;
+  created_at: string;
+};
+
+export type RunResult = {
+  outputs: any;
+  deployment?: Deployment | null;
 };
 
 export async function fetchHealth(): Promise<HealthResponse> {
@@ -147,6 +168,55 @@ export async function validateAgent(id: string, score?: number): Promise<Agent> 
     throw new Error(`Failed to validate agent: ${resp.status} ${text}`);
   }
 
+  return resp.json();
+}
+
+export async function runAgent(
+  id: string,
+  target: string,
+  inputs?: any
+): Promise<RunResult> {
+  const body: any = {
+    target: target || "local-ui",
+    inputs: inputs ?? {}
+  };
+
+  const resp = await fetch(`/api/agents/${id}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Failed to run agent: ${resp.status} ${text}`);
+  }
+
+  return resp.json();
+}
+
+
+export async function deployAgent(
+  id: string,
+  target: string
+): Promise<Deployment> {
+  const resp = await fetch(`/api/agents/${id}/deploy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target })
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Failed to deploy agent: ${resp.status} ${text}`);
+  }
+  return resp.json();
+}
+
+export async function fetchDeployments(id: string): Promise<Deployment[]> {
+  const resp = await fetch(`/api/agents/${id}/deployments`);
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch deployments: ${resp.status}`);
+  }
   return resp.json();
 }
 

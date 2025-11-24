@@ -192,3 +192,25 @@ def test_validate_agent_updates_status_and_score():
     assert validated["validation_score"] == 0.9
     assert validated["last_validated_at"] is not None
 
+def test_deploy_agent_creates_deployment():
+    payload = _sample_agent_payload()
+    resp = client.post("/agents", json=payload)
+    assert resp.status_code == 201
+    created = resp.json()
+    agent_id = created["id"]
+
+    # Deploy to target "dev"
+    resp_dep = client.post(f"/agents/{agent_id}/deploy", json={"target": "dev"})
+    assert resp_dep.status_code == 201
+    dep = resp_dep.json()
+    assert dep["agent_id"] == agent_id
+    assert dep["target"] == "dev"
+    assert dep["status"] == "requested"
+
+    # List deployments
+    resp_list = client.get(f"/agents/{agent_id}/deployments")
+    assert resp_list.status_code == 200
+    deps = resp_list.json()
+    assert len(deps) >= 1
+    assert deps[0]["agent_id"] == agent_id
+

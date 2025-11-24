@@ -85,11 +85,11 @@ class AgentBase(BaseModel):
     git_commit: Optional[str] = None
     container_image: Optional[str] = None
     entrypoint: Optional[str] = None
+
     # Validation / evaluation metadata
     validation_status: str = "unvalidated"  # "unvalidated", "validated", "failed", etc.
     last_validated_at: Optional[datetime] = None
     validation_score: Optional[float] = None
-
 
 
 class AgentCreate(AgentBase):
@@ -106,3 +106,46 @@ class AgentSpec(AgentBase):
     id: UUID = Field(default_factory=uuid4)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+# ----------------------------
+# Deployment models
+# ----------------------------
+
+class DeploymentCreate(BaseModel):
+    """
+    Request body when asking to deploy an agent.
+    For the stub, we just capture a logical target.
+    """
+    target: str = Field(..., description="Logical deployment target, e.g., 'dev', 'hpc', 'lab-node-1'")
+
+
+class Deployment(BaseModel):
+    """
+    Representation of a deployment record returned by the API.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    agent_id: UUID
+    target: str
+    status: str
+    created_at: datetime
+
+class RunRequest(BaseModel):
+    """
+    Request body for running an agent locally via the backend.
+    For now, inputs are optional and default to an empty dict.
+    """
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    target: str = Field(
+        default="local-ui",
+        description="Logical deployment target, used when recording a deployment",
+    )
+
+
+class RunResult(BaseModel):
+    """
+    Response from /agents/{id}/run.
+    """
+    outputs: Dict[str, Any]
+    deployment: Optional[Deployment] = None

@@ -54,3 +54,34 @@ class Agent(Base):
         nullable=False,
     )
 
+
+class Deployment(Base):
+    """
+    Simple deployment record for an agent.
+
+    This is a stub to represent "agent spec was asked to run on target X".
+    """
+
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        index=True,
+    )
+
+    agent_id: Mapped[str] = mapped_column(
+        String(36),
+        index=True,
+        nullable=False,
+    )
+
+    target: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="requested", nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+

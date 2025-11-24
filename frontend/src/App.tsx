@@ -1,16 +1,19 @@
 import React, { useEffect, useState, FormEvent } from "react";
-import type { Agent, AgentFilters, HealthResponse } from "./api";
+import type { Agent, AgentFilters, HealthResponse, Deployment, RunResult } from "./api";
 import {
   fetchHealth,
   fetchAgents,
   fetchAgent,
   createSampleAgent,
   validateAgent,
+  deployAgent,
+  fetchDeployments,
 } from "./api";
 
 const App: React.FC = () => {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [lastRunOutputs, setLastRunOutputs] = useState<any | null>(null);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsError, setAgentsError] = useState<string | null>(null);
@@ -32,6 +35,13 @@ const App: React.FC = () => {
     null
   );
   const [selectedLoading, setSelectedLoading] = useState(false);
+
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
+  const [deploymentsLoading, setDeploymentsLoading] = useState(false);
+  const [deployTarget, setDeployTarget] = useState<string>("dev");
+  const [deploying, setDeploying] = useState(false);
+
 
   const [copyIdStatus, setCopyIdStatus] = useState<
     "idle" | "copied" | "error"
@@ -78,6 +88,8 @@ const App: React.FC = () => {
     if (filters.owner) nonEmpty.owner = filters.owner;
     await loadAgents(nonEmpty);
     setSelectedAgentId(null);
+    setDeployments([]);
+    setDeploymentsError(null);
     setSelectedAgent(null);
     setSelectedAgentError(null);
   };
@@ -117,10 +129,44 @@ const App: React.FC = () => {
       setSelectedLoading(true);
       const detail = await fetchAgent(agent.id);
       setSelectedAgent(detail);
+      // Load deployments for this agent
+      try {
+        setDeploymentsLoading(true);
+        const deps = await fetchDeployments(agent.id);
+        setDeployments(deps);
+        setDeploymentsError(null);
+      } catch (err: any) {
+        setDeploymentsError(err.message ?? String(err));
+      } finally {
+        setDeploymentsLoading(false);
+      }
+
     } catch (err: any) {
       setSelectedAgentError(err.message ?? String(err));
     } finally {
       setSelectedLoading(false);
+    }
+  };
+
+  const handleDeploySelected = async () => {
+    if (!selectedAgentId) return;
+    try {
+      setDeploying(true);
+      // For now, we don't have a UI for inputs, so send an empty object.
+      const result = await runAgent(selectedAgentId, deployTarget || "local-ui", {});
+      // Save outputs from the agent run
+      setLastRunOutputs(result.outputs);
+
+      // If a deployment was recorded, update the deployments list
+      if (result.deployment) {
+        setDeployments((prev) => [result.deployment!, ...prev]);
+      }
+
+      setDeploymentsError(null);
+    } catch (err: any) {
+      setDeploymentsError(err.message ?? String(err));
+    } finally {
+      setDeploying(false);
     }
   };
 
@@ -183,19 +229,29 @@ const App: React.FC = () => {
         }}
       >
         <h2>Backend health</h2>
-        {healthError && <p style={{ color: "red" }}>Error: {healthError}</p>}
-        {health ? (
-          <pre
+        {healthError && (
+          <p style={{ color: "red" }}>Error: {healthError}</p>
+        )}
+
+        {health && !healthError ? (
+          <div
             style={{
-              background: "#f7f7f7",
-              padding: "0.5rem",
-              borderRadius: "0.25rem",
-              fontSize: "0.85rem",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.4rem",
+              fontSize: "0.9rem",
+              color: "#155724",
+              background: "#d4edda",
+              border: "1px solid #c3e6cb",
+              borderRadius: "0.5rem",
+              padding: "0.3rem 0.6rem",
+              marginTop: "0.25rem",
             }}
           >
-            {JSON.stringify(health, null, 2)}
-          </pre>
-        ) : !healthError ? (
+            <span style={{ fontSize: "1.1rem" }}>✅</span>
+            <span>Backend is healthy</span>
+          </div>
+        ) : !health && !healthError ? (
           <p>Checking health…</p>
         ) : null}
       </section>
@@ -695,6 +751,143 @@ const App: React.FC = () => {
                   >
                     {validating ? "Validating…" : "Mark as validated"}
                   </button>
+                </div>
+
+                {/* Deploy section */}
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <strong>Deploy:</strong>{" "}
+                  <input
+                    type="text"
+                    value={deployTarget}
+                    onChange={(e) => setDeployTarget(e.target.value)}
+                    placeholder="target (e.g. dev, hpc, lab-node-1)"
+                    style={{
+                      marginLeft: "0.5rem",
+                      padding: "0.15rem 0.4rem",
+                      fontSize: "0.8rem",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDeploySelected}
+                    disabled={deploying}
+                    style={{
+                      marginLeft: "0.5rem",
+                      padding: "0.2rem 0.6rem",
+                      borderRadius: "0.4rem",
+                      border: "1px solid #444",
+                      background: deploying ? "#eee" : "#fff",
+                      cursor: deploying ? "default" : "pointer",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    {deploying ? "Deploying…" : "Create deployment"}
+                  </button>
+                  {deploymentsError && (
+                    <div style={{ color: "red", marginTop: "0.25rem" }}>
+                      {deploymentsError}
+                    </div>
+                  )}
+                </div>
+
+                {/* Deployment history */}
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <strong>Deployments:</strong>
+                  {deploymentsLoading ? (
+                    <p>Loading deployments…</p>
+                  ) : deployments.length === 0 ? (
+                    <p style={{ margin: "0.25rem 0" }}>No deployments recorded.</p>
+                  ) : (
+                    <table
+                      style={{
+                        width: "100%",
+                        borderCollapse: "collapse",
+                        fontSize: "0.8rem",
+                        marginTop: "0.25rem",
+                      }}
+                    >
+                      <thead>
+                        <tr>
+                          <th
+                            style={{
+                              borderBottom: "1px solid #ccc",
+                              textAlign: "left",
+                            }}
+                          >
+                            Target
+                          </th>
+                          <th
+                            style={{
+                              borderBottom: "1px solid #ccc",
+                              textAlign: "left",
+                            }}
+                          >
+                            Status
+                          </th>
+                          <th
+                            style={{
+                              borderBottom: "1px solid #ccc",
+                              textAlign: "left",
+                            }}
+                          >
+                            Time
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deployments.map((d) => (
+                          <tr key={d.id}>
+                            <td
+                              style={{
+                                borderBottom: "1px solid #eee",
+                                padding: "0.2rem 0.2rem",
+                              }}
+                            >
+                              {d.target}
+                            </td>
+                            <td
+                              style={{
+                                borderBottom: "1px solid #eee",
+                                padding: "0.2rem 0.2rem",
+                              }}
+                            >
+                              {d.status}
+                            </td>
+                            <td
+                              style={{
+                                borderBottom: "1px solid #eee",
+                                padding: "0.2rem 0.2rem",
+                              }}
+                            >
+                              {new Date(d.created_at).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Last run outputs */}
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <strong>Last run outputs:</strong>
+                  {lastRunOutputs ? (
+                    <pre
+                      style={{
+                        background: "#f7f7f7",
+                        padding: "0.5rem",
+                        borderRadius: "0.25rem",
+                        fontSize: "0.8rem",
+                        marginTop: "0.25rem",
+                        maxHeight: "12rem",
+                        overflow: "auto"
+                      }}
+                    >
+                      {JSON.stringify(lastRunOutputs, null, 2)}
+                    </pre>
+                  ) : (
+                    <p style={{ margin: "0.25rem 0" }}>No runs recorded in this session.</p>
+                  )}
                 </div>
 
                 {/* Tags */}
