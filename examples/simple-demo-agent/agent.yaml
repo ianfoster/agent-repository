@@ -1,0 +1,40 @@
+# examples/agents_demo/agent.yaml
+
+name: "simple-demo-agent"
+version: "0.1.0"
+description: >
+  A very simple example agent that echoes its inputs and adds a greeting message.
+
+agent_type: "task"
+tags: ["example", "demo", "local-run"]
+owner: "ian"  # or whatever you like
+
+# For now, we'll point git_repo to this same repo on GitHub.
+# Replace with your actual GitHub URL:
+git_repo: "https://github.com/ianfoster/agent-repository"
+git_commit: ""      # optional; leave blank to use current HEAD
+container_image: "" # not used yet
+entrypoint: "agents_demo.simple_agent:SimpleDemoAgent"
+
+inputs:
+  name:
+    description: "Name to greet"
+    type: "string"
+    required: true
+outputs:
+  greeting:
+    description: "A greeting message"
+    type: "string"
+    required: true
+
+a2a_card:
+  name: "simple-demo-agent"
+  url: "https://example.org/a2a/simple-demo-agent"
+  description: "A trivial A2A card for a simple demo agent."
+  version: "0.1.0"
+  protocolVersion: "0.2.6"
+  capabilities: {}
+  skills: []
+  defaultInputModes: ["text/plain"]
+  defaultOutputModes: ["text/plain"]
+  supportsAuthenticatedExtendedCard: false
