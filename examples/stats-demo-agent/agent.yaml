@@ -37,6 +37,9 @@ outputs:
     type: "float"
     required: true
 
+validation_inputs:
+  values: [1, 2, 3.5, 10]
+
 a2a_card:
   name: "stats-demo-agent"
   url: "https://github.com/ianfoster/agent-repository/tree/main/examples/stats-demo-agent"

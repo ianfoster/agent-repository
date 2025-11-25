@@ -548,7 +548,39 @@ const App: React.FC = () => {
                             padding: "0.25rem 0.2rem",
                           }}
                         >
-                          {agent.validation_status}
+                          <span
+                            style={{
+                              padding: "0.1rem 0.45rem",
+                              borderRadius: "0.75rem",
+                              border: "1px solid #ccc",
+                              fontSize: "0.75rem",
+                              background:
+                                agent.validation_status === "validated"
+                                  ? "#e6ffed"
+                                  : agent.validation_status === "failed"
+                                  ? "#ffe5e5"
+                                  : "#fff4e5",
+                              color:
+                                agent.validation_status === "validated"
+                                  ? "#155724"
+                                  : agent.validation_status === "failed"
+                                  ? "#a00"
+                                  : "#8a6d3b",
+                            }}
+                          >
+                            {agent.validation_status}
+                          </span>
+                          {agent.last_validated_at && (
+                            <div
+                              style={{
+                                fontSize: "0.7rem",
+                                color: "#666",
+                                marginTop: "0.1rem",
+                              }}
+                            >
+                              {new Date(agent.last_validated_at).toLocaleDateString()}
+                            </div>
+                          )}
                         </td>
                         <td
                           style={{
@@ -691,7 +723,7 @@ const App: React.FC = () => {
                       fontSize: "0.8rem",
                     }}
                   >
-                    {validating ? "Validating…" : "Mark as validated"}
+                    {validating ? "Validating…" : "Run validation"}
                   </button>
                 </div>
 

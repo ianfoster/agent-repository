@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional
 import httpx
 
-
 class AgentClient:
     """
     Python SDK client for the Academy Agent Repository.
@@ -107,6 +106,30 @@ class AgentClient:
         resp = httpx.post(
             f"{self.base_url}/agents/{agent_id}/validate",
             params=params or None,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def run_agent(
+        self,
+        agent_id: str,
+        target: str,
+        inputs: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Call the backend /agents/{id}/run endpoint.
+
+        This executes the agent using an existing deployment for the given
+        target and returns outputs + deployment metadata.
+        """
+        payload: Dict[str, Any] = {
+            "target": target,
+            "inputs": inputs or {},
+        }
+        resp = httpx.post(
+            f"{self.base_url}/agents/{agent_id}/run",
+            json=payload,
             timeout=self.timeout,
         )
         resp.raise_for_status()

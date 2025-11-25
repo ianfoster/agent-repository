@@ -15,8 +15,8 @@ class MaterialsScreeningAgent:
         for m in materials:
             score = random.uniform(0, 1)
             label = (
-                "promising" if score > 0.75 else
-                "borderline" if score > 0.3 else
+                "promising" if score > 0.6 else
+                "borderline" if score > 0.2 else
                 "poor"
             )
             results.append({"material": m, "score": score, "label": label})

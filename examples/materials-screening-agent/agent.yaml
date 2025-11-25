@@ -25,6 +25,9 @@ outputs:
     type: "json"
     required: true
 
+validation_inputs:
+  materials: ["Fe2O3", "TiO2"]
+
 a2a_card:
   name: "materials-screening-agent"
   url: "https://github.com/ianfoster/agent-repository/tree/main/examples/materials-screening-agent"

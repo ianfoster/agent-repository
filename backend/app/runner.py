@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import shutil
 import importlib
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 from .schemas import AgentSpec, RunRequest
 
@@ -59,6 +60,7 @@ def _ensure_repo_checked_out(repo_url: str, commit: str | None, dest_dir: Path) 
         )
 
 
+
 def stage_agent_code(agent: AgentSpec, workdir: Path, target: str) -> Path:
     """
     Stage an agent's code locally by cloning/updating its git_repo.
@@ -73,15 +75,19 @@ def stage_agent_code(agent: AgentSpec, workdir: Path, target: str) -> Path:
     # e.g., ~/.academy/agents/<agent-name>/<target>
     agent_name = agent.name or "unknown-agent"
     dest_dir = workdir / agent_name / target
+    git_dir = dest_dir / ".git"
 
     # Skip git operations in tests if AGENTS_SKIP_GIT is set
     if os.getenv("AGENTS_SKIP_GIT", "").lower() in {"1", "true", "yes"}:
         dest_dir.mkdir(parents=True, exist_ok=True)
         return dest_dir
 
+    # If the directory exists but is not a git repo, remove it and reclone cleanly.
+    if dest_dir.exists() and not git_dir.exists():
+        shutil.rmtree(dest_dir)
+
     _ensure_repo_checked_out(git_repo, git_commit, dest_dir)
     return dest_dir
-
 
 def run_agent_locally_from_staged(
     agent: AgentSpec,

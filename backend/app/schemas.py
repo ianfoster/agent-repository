@@ -87,6 +87,7 @@ class AgentBase(BaseModel):
     entrypoint: Optional[str] = None
 
     # Validation / evaluation metadata
+    validation_inputs: Optional[Dict[str, Any]] = None
     validation_status: str = "unvalidated"  # "unvalidated", "validated", "failed", etc.
     last_validated_at: Optional[datetime] = None
     validation_score: Optional[float] = None

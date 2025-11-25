@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
+import os
+from pathlib import Path
+from .runner import stage_agent_code, run_agent_locally_from_staged
+
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -77,6 +81,7 @@ def get_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentSpec:
     return agent
 
 
+
 @app.post("/agents/{agent_id}/validate", response_model=AgentSpec)
 def validate_agent(
     agent_id: UUID,
@@ -84,8 +89,44 @@ def validate_agent(
     db: Session = Depends(get_db),
 ) -> AgentSpec:
     """
-    Mark an agent as validated and optionally set a validation score.
+    Simple validation:
+
+    1. Stage the agent's code to a special 'local-validate' target.
+    2. If `validation_inputs` are provided in the spec, run the agent once
+       with those inputs as a smoke test.
+    3. If staging + run succeed, mark the agent as validated.
     """
+    # 1. Load agent spec from DB
+    agent = crud.get_agent(db, str(agent_id))
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # 2. Stage code
+    root = os.getenv("AGENTS_WORKDIR")
+    workdir = Path(root) if root else Path.home() / ".academy" / "agents"
+    target = "local-validate"
+
+    try:
+        staged_path = stage_agent_code(agent, workdir, target=target)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Validation failed during staging: {e}",
+        ) from e
+
+    # 3. Optional smoke-run if validation_inputs are present
+    if agent.validation_inputs:
+        req = RunRequest(inputs=agent.validation_inputs, target=target)
+        try:
+            # We don't care about outputs here, just that it runs without error
+            _ = run_agent_locally_from_staged(agent, req, staged_path)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Validation failed during test run: {e}",
+            ) from e
+
+    # 4. Mark as validated in DB
     validated = crud.validate_agent(db, str(agent_id), score=score)
     if validated is None:
         raise HTTPException(status_code=404, detail="Agent not found")
