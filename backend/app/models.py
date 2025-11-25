@@ -78,6 +78,7 @@ class Deployment(Base):
 
     target: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="requested", nullable=False)
+    local_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

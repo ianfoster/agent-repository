@@ -129,6 +129,7 @@ class Deployment(BaseModel):
     agent_id: UUID
     target: str
     status: str
+    local_path: Optional[str] = None
     created_at: datetime
 
 class RunRequest(BaseModel):

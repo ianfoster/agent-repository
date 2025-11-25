@@ -7,22 +7,17 @@ import {
   createSampleAgent,
   validateAgent,
   runAgent,
+  deployAgent,
   fetchDeployments,
 } from "./api";
 
 const App: React.FC = () => {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [lastRunOutputs, setLastRunOutputs] = useState<any | null>(null);
-  const [inputsJson, setInputsJson] = useState<string>("{}");
-  const [inputsError, setInputsError] = useState<string | null>(null);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsError, setAgentsError] = useState<string | null>(null);
   const [agentsLoading, setAgentsLoading] = useState(false);
-
-  const [creating, setCreating] = useState(false);
-  const [validating, setValidating] = useState(false);
 
   const [filters, setFilters] = useState<AgentFilters>({
     name: "",
@@ -31,31 +26,34 @@ const App: React.FC = () => {
     owner: "",
   });
 
+  const [creating, setCreating] = useState(false);
+  const [validating, setValidating] = useState(false);
+
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [selectedAgentError, setSelectedAgentError] = useState<string | null>(
-    null
-  );
+  const [selectedAgentError, setSelectedAgentError] = useState<string | null>(null);
   const [selectedLoading, setSelectedLoading] = useState(false);
 
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
   const [deploymentsLoading, setDeploymentsLoading] = useState(false);
-  const [deployTarget, setDeployTarget] = useState<string>("dev");
+
+  const [deployTarget, setDeployTarget] = useState<string>("local-ui");
   const [deploying, setDeploying] = useState(false);
 
+  const [inputsJson, setInputsJson] = useState<string>("{}");
+  const [inputsError, setInputsError] = useState<string | null>(null);
 
-  const [copyIdStatus, setCopyIdStatus] = useState<
-    "idle" | "copied" | "error"
-  >("idle");
+  const [lastRunOutputs, setLastRunOutputs] = useState<any | null>(null);
 
-  // Initial load
+  const [copyIdStatus, setCopyIdStatus] = useState<"idle" | "copied" | "error">("idle");
+
   useEffect(() => {
     fetchHealth()
       .then(setHealth)
       .catch((err) => setHealthError(err.message));
 
-    loadAgents(); // no filters initially
+    loadAgents();
   }, []);
 
   const loadAgents = async (opts?: AgentFilters) => {
@@ -65,15 +63,13 @@ const App: React.FC = () => {
       setAgents(data);
       setAgentsError(null);
     } catch (err: any) {
-      setAgentsError(err.message ?? String(err));
+      setAgentsError(err?.message ?? String(err));
     } finally {
       setAgentsLoading(false);
     }
   };
 
-  const handleFilterChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ): void => {
+  const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFilters((prev) => ({
       ...prev,
@@ -90,13 +86,11 @@ const App: React.FC = () => {
     if (filters.owner) nonEmpty.owner = filters.owner;
     await loadAgents(nonEmpty);
     setSelectedAgentId(null);
-    setDeployments([]);
-    setDeploymentsError(null);
     setSelectedAgent(null);
     setSelectedAgentError(null);
   };
 
-  const handleClearFilters = async () => {
+  const handleFilterClear = async () => {
     setFilters({
       name: "",
       agent_type: "",
@@ -116,7 +110,7 @@ const App: React.FC = () => {
       setAgents((prev) => [created, ...prev]);
       setAgentsError(null);
     } catch (err: any) {
-      setAgentsError(err.message ?? String(err));
+      setAgentsError(err?.message ?? String(err));
     } finally {
       setCreating(false);
     }
@@ -126,70 +120,29 @@ const App: React.FC = () => {
     setSelectedAgentId(agent.id);
     setSelectedAgent(null);
     setSelectedAgentError(null);
+    setDeployments([]);
+    setDeploymentsError(null);
+    setLastRunOutputs(null);
 
     try {
       setSelectedLoading(true);
       const detail = await fetchAgent(agent.id);
       setSelectedAgent(detail);
-      // Load deployments for this agent
+
       try {
         setDeploymentsLoading(true);
         const deps = await fetchDeployments(agent.id);
         setDeployments(deps);
         setDeploymentsError(null);
       } catch (err: any) {
-        setDeploymentsError(err.message ?? String(err));
+        setDeploymentsError(err?.message ?? String(err));
       } finally {
         setDeploymentsLoading(false);
       }
-
     } catch (err: any) {
-      setSelectedAgentError(err.message ?? String(err));
+      setSelectedAgentError(err?.message ?? String(err));
     } finally {
       setSelectedLoading(false);
-    }
-  };
-
-  const handleDeploySelected = async () => {
-    if (!selectedAgentId) return;
-  
-    // Parse JSON from textarea
-    let parsedInputs: any = {};
-    try {
-      if (inputsJson.trim()) {
-        const parsed = JSON.parse(inputsJson);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          throw new Error("Inputs JSON must be a JSON object (e.g. {\"name\": \"Ian\"}).");
-        }
-        parsedInputs = parsed;
-      }
-      setInputsError(null);
-    } catch (err: any) {
-      setInputsError(
-        err?.message ??
-          "Failed to parse JSON. Ensure it is a valid JSON object (e.g. {\"key\": \"value\"})."
-      );
-      return;
-    }
-  
-    try {
-      setDeploying(true);
-      const result = await runAgent(
-        selectedAgentId,
-        deployTarget || "local-ui",
-        parsedInputs
-      );
-      setLastRunOutputs(result.outputs);
-  
-      if (result.deployment) {
-        setDeployments((prev) => [result.deployment!, ...prev]);
-      }
-  
-      setDeploymentsError(null);
-    } catch (err: any) {
-      setDeploymentsError(err.message ?? String(err));
-    } finally {
-      setDeploying(false);
     }
   };
 
@@ -204,7 +157,7 @@ const App: React.FC = () => {
       );
       setSelectedAgentError(null);
     } catch (err: any) {
-      setSelectedAgentError(err.message ?? String(err));
+      setSelectedAgentError(err?.message ?? String(err));
     } finally {
       setValidating(false);
     }
@@ -227,6 +180,70 @@ const App: React.FC = () => {
     }
   };
 
+  const handleRunSelected = async () => {
+    if (!selectedAgentId) return;
+
+    // Parse JSON inputs
+    let parsedInputs: any = {};
+    try {
+      if (inputsJson.trim()) {
+        const parsed = JSON.parse(inputsJson);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new Error(
+            'Inputs JSON must be an object, e.g. {"name": "Ian"} or {"values": [1,2,3]}'
+          );
+        }
+        parsedInputs = parsed;
+      }
+      setInputsError(null);
+    } catch (err: any) {
+      setInputsError(
+        err?.message ??
+          'Failed to parse JSON. Ensure it is a valid JSON object (e.g. {"key": "value"}).'
+      );
+      return;
+    }
+
+    try {
+      setDeploying(true);
+      const result: RunResult = await runAgent(
+        selectedAgentId,
+        deployTarget || "local-ui",
+        parsedInputs
+      );
+      setLastRunOutputs(result.outputs);
+      if (result.deployment) {
+        setDeployments((prev) => [result.deployment, ...prev]);
+      }
+      setDeploymentsError(null);
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      if (msg.includes("No ready deployment for target")) {
+        setDeploymentsError(
+          `No ready deployment for target "${deployTarget}". Please deploy this agent to this target first.`
+        );
+      } else {
+        setDeploymentsError(msg);
+      }
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleDeployOnly = async () => {
+    if (!selectedAgentId) return;
+    try {
+      setDeploying(true);
+      const dep = await deployAgent(selectedAgentId, deployTarget || "local");
+      setDeployments((prev) => [dep, ...prev]);
+      setDeploymentsError(null);
+    } catch (err: any) {
+      setDeploymentsError(err?.message ?? String(err));
+    } finally {
+      setDeploying(false);
+    }
+  };
+
   return (
     <div
       style={{
@@ -238,8 +255,7 @@ const App: React.FC = () => {
     >
       <h1>Academy Agent Repository</h1>
       <p style={{ color: "#555", marginBottom: "1rem" }}>
-        Browse, search, and inspect agents (including A2A Agent Card and
-        GitHub/container metadata).
+        Browse, search, and inspect agents; deploy them from GitHub; and run them locally.
       </p>
 
       {/* Health section */}
@@ -252,10 +268,7 @@ const App: React.FC = () => {
         }}
       >
         <h2>Backend health</h2>
-        {healthError && (
-          <p style={{ color: "red" }}>Error: {healthError}</p>
-        )}
-
+        {healthError && <p style={{ color: "red" }}>Error: {healthError}</p>}
         {health && !healthError ? (
           <div
             style={{
@@ -325,13 +338,7 @@ const App: React.FC = () => {
           }}
         >
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.8rem",
-                color: "#555",
-              }}
-            >
+            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
               Name
             </label>
             <input
@@ -344,13 +351,7 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.8rem",
-                color: "#555",
-              }}
-            >
+            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
               Type
             </label>
             <input
@@ -363,13 +364,7 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.8rem",
-                color: "#555",
-              }}
-            >
+            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
               Tag
             </label>
             <input
@@ -382,13 +377,7 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.8rem",
-                color: "#555",
-              }}
-            >
+            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
               Owner
             </label>
             <input
@@ -396,7 +385,7 @@ const App: React.FC = () => {
               name="owner"
               value={filters.owner ?? ""}
               onChange={handleFilterChange}
-              placeholder="team name or user"
+              placeholder="team or user"
               style={{ width: "100%", padding: "0.25rem" }}
             />
           </div>
@@ -416,7 +405,7 @@ const App: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={handleClearFilters}
+              onClick={handleFilterClear}
               style={{
                 padding: "0.35rem 0.7rem",
                 borderRadius: "0.4rem",
@@ -431,11 +420,7 @@ const App: React.FC = () => {
           </div>
         </form>
 
-        {agentsError && (
-          <p style={{ color: "red", marginBottom: "0.5rem" }}>
-            Error: {agentsError}
-          </p>
-        )}
+        {agentsError && <p style={{ color: "red" }}>Error: {agentsError}</p>}
 
         <div
           style={{
@@ -460,60 +445,22 @@ const App: React.FC = () => {
               >
                 <thead>
                   <tr>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
                       Name
                     </th>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
                       Version
                     </th>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
                       Type
                     </th>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
                       Owner
                     </th>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
                       Status
                     </th>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
-                      Links
-                    </th>
-                    <th
-                      style={{
-                        borderBottom: "1px solid #ccc",
-                        textAlign: "left",
-                      }}
-                    >
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
                       Tags
                     </th>
                   </tr>
@@ -530,7 +477,6 @@ const App: React.FC = () => {
                           background: isSelected ? "#eef5ff" : "transparent",
                         }}
                       >
-                        {/* Name */}
                         <td
                           style={{
                             borderBottom: "1px solid #eee",
@@ -539,8 +485,6 @@ const App: React.FC = () => {
                         >
                           {agent.name}
                         </td>
-
-                        {/* Version */}
                         <td
                           style={{
                             borderBottom: "1px solid #eee",
@@ -549,8 +493,6 @@ const App: React.FC = () => {
                         >
                           {agent.version}
                         </td>
-
-                        {/* Type */}
                         <td
                           style={{
                             borderBottom: "1px solid #eee",
@@ -559,8 +501,6 @@ const App: React.FC = () => {
                         >
                           {agent.agent_type}
                         </td>
-
-                        {/* Owner */}
                         <td
                           style={{
                             borderBottom: "1px solid #eee",
@@ -569,67 +509,14 @@ const App: React.FC = () => {
                         >
                           {agent.owner ?? "—"}
                         </td>
-
-                        {/* Validation status */}
                         <td
                           style={{
                             borderBottom: "1px solid #eee",
                             padding: "0.25rem 0.2rem",
                           }}
                         >
-                          <span
-                            style={{
-                              padding: "0.1rem 0.4rem",
-                              borderRadius: "0.75rem",
-                              border: "1px solid #ccc",
-                              fontSize: "0.75rem",
-                              background:
-                                agent.validation_status === "validated"
-                                  ? "#e6ffed"
-                                  : agent.validation_status === "failed"
-                                  ? "#ffe5e5"
-                                  : "#fff4e5",
-                            }}
-                          >
-                            {agent.validation_status}
-                          </span>
+                          {agent.validation_status}
                         </td>
-
-                        {/* Links */}
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          {agent.git_repo && (
-                            <a
-                              href={agent.git_repo}
-                              title="GitHub repo"
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              style={{
-                                marginRight: "0.4rem",
-                                fontSize: "0.8rem",
-                              }}
-                            >
-                              GH
-                            </a>
-                          )}
-                          {agent.container_image && (
-                            <span
-                              title={agent.container_image}
-                              style={{ fontSize: "0.8rem", color: "#555" }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              🐳
-                            </span>
-                          )}
-                          {!agent.git_repo && !agent.container_image && "—"}
-                        </td>
-
-                        {/* Tags */}
                         <td
                           style={{
                             borderBottom: "1px solid #eee",
@@ -676,7 +563,6 @@ const App: React.FC = () => {
                   <span style={{ color: "#666" }}>v{selectedAgent.version}</span>
                 </h4>
 
-                {/* ID + copy button */}
                 <div
                   style={{
                     fontSize: "0.8rem",
@@ -714,7 +600,7 @@ const App: React.FC = () => {
                   {selectedAgent.description}
                 </p>
 
-                {/* Basic info + validation badge */}
+                {/* Validation summary */}
                 <div style={{ marginBottom: "0.5rem" }}>
                   <strong>Type:</strong> {selectedAgent.agent_type}{" "}
                   <strong style={{ marginLeft: "0.75rem" }}>Owner:</strong>{" "}
@@ -776,17 +662,16 @@ const App: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Deploy section + JSON inputs */}
+                {/* Deploy / Run section */}
                 <div style={{ marginBottom: "0.75rem" }}>
-                  <strong>Deploy / Run locally:</strong>
-                
+                  <strong>Deploy &amp; Run locally:</strong>
                   <div
                     style={{
                       marginTop: "0.25rem",
                       display: "flex",
                       gap: "0.5rem",
                       alignItems: "center",
-                      flexWrap: "wrap"
+                      flexWrap: "wrap",
                     }}
                   >
                     <span>Target:</span>
@@ -798,12 +683,35 @@ const App: React.FC = () => {
                       style={{
                         padding: "0.15rem 0.4rem",
                         fontSize: "0.8rem",
-                        minWidth: "10rem"
+                        minWidth: "10rem",
                       }}
                     />
+                    {Array.from(new Set(deployments.map((d) => d.target))).length >
+                      0 && (
+                      <>
+                        <span>or pick existing:</span>
+                        <select
+                          value={deployTarget}
+                          onChange={(e) => setDeployTarget(e.target.value)}
+                          style={{
+                            padding: "0.15rem 0.4rem",
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          <option value="">(select target)</option>
+                          {Array.from(
+                            new Set(deployments.map((d) => d.target))
+                          ).map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                     <button
                       type="button"
-                      onClick={handleDeploySelected}
+                      onClick={handleRunSelected}
                       disabled={deploying}
                       style={{
                         padding: "0.2rem 0.6rem",
@@ -811,10 +719,25 @@ const App: React.FC = () => {
                         border: "1px solid #444",
                         background: deploying ? "#eee" : "#fff",
                         cursor: deploying ? "default" : "pointer",
-                        fontSize: "0.8rem"
+                        fontSize: "0.8rem",
                       }}
                     >
                       {deploying ? "Running…" : "Run agent"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeployOnly}
+                      disabled={deploying}
+                      style={{
+                        padding: "0.2rem 0.6rem",
+                        borderRadius: "0.4rem",
+                        border: "1px solid #888",
+                        background: deploying ? "#eee" : "#fff",
+                        cursor: deploying ? "default" : "pointer",
+                        fontSize: "0.8rem",
+                      }}
+                    >
+                      {deploying ? "Deploying…" : "Deploy (stage code)"}
                     </button>
                   </div>
 
@@ -826,9 +749,9 @@ const App: React.FC = () => {
                         marginBottom: "0.25rem",
                       }}
                     >
-                      <strong>Run inputs (JSON):</strong> (must be a JSON object, e.g.
-                      <code>{" { \"name\": \"Ian\" }"}</code> or
-                      <code>{" { \"values\": [1,2,3] }"}</code>)
+                      <strong>Run inputs (JSON):</strong> must be a JSON object, e.g.{" "}
+                      <code>{'{ "name": "Ian" }'}</code> or{" "}
+                      <code>{'{ "values": [1,2,3] }'}</code>
                     </div>
                     <textarea
                       value={inputsJson}
@@ -844,18 +767,25 @@ const App: React.FC = () => {
                         padding: "0.4rem",
                         borderRadius: "0.25rem",
                         border: "1px solid #ccc",
-                        resize: "vertical"
+                        resize: "vertical",
                       }}
                     />
                     {inputsError && (
-                      <div style={{ color: "red", fontSize: "0.8rem", marginTop: "0.25rem" }}>
+                      <div
+                        style={{
+                          color: "red",
+                          fontSize: "0.8rem",
+                          marginTop: "0.25rem",
+                        }}
+                      >
                         {inputsError}
                       </div>
                     )}
                   </div>
-                
                   {deploymentsError && (
-                    <div style={{ color: "red", marginTop: "0.25rem" }}>{deploymentsError}</div>
+                    <div style={{ color: "red", marginTop: "0.25rem" }}>
+                      {deploymentsError}
+                    </div>
                   )}
                 </div>
 
@@ -949,13 +879,15 @@ const App: React.FC = () => {
                         fontSize: "0.8rem",
                         marginTop: "0.25rem",
                         maxHeight: "12rem",
-                        overflow: "auto"
+                        overflow: "auto",
                       }}
                     >
                       {JSON.stringify(lastRunOutputs, null, 2)}
                     </pre>
                   ) : (
-                    <p style={{ margin: "0.25rem 0" }}>No runs recorded in this session.</p>
+                    <p style={{ margin: "0.25rem 0" }}>
+                      No runs recorded in this session.
+                    </p>
                   )}
                 </div>
 
@@ -982,7 +914,8 @@ const App: React.FC = () => {
                     "—"
                   )}
                   <br />
-                  <strong>Commit:</strong> {selectedAgent.git_commit ?? "—"}
+                  <strong>Commit:</strong>{" "}
+                  {selectedAgent.git_commit ?? "—"}
                   <br />
                   <strong>Container image:</strong>{" "}
                   {selectedAgent.container_image ?? "—"}
@@ -997,8 +930,7 @@ const App: React.FC = () => {
                   {selectedAgent.a2a_card ? (
                     <>
                       <div>
-                        <strong>Name:</strong>{" "}
-                        {selectedAgent.a2a_card.name}
+                        <strong>Name:</strong> {selectedAgent.a2a_card.name}
                       </div>
                       <div>
                         <strong>URL:</strong>{" "}
@@ -1058,4 +990,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-

@@ -12,6 +12,9 @@ from app.database import Base, get_db
 # Use a separate SQLite DB for tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_agents.db"
 
+import os
+os.environ["AGENTS_SKIP_GIT"] = "1"
+
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False},
@@ -80,6 +83,7 @@ def _sample_agent_payload() -> Dict[str, Any]:
             "defaultOutputModes": ["text/plain"],
             "supportsAuthenticatedExtendedCard": False
         },
+        #"git_repo": "https://github.com/example/materials-agent",
         "git_repo": "https://github.com/example/materials-agent",
         "git_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
         "container_image": "ghcr.io/example/materials-agent:1.0.0",
@@ -205,7 +209,8 @@ def test_deploy_agent_creates_deployment():
     dep = resp_dep.json()
     assert dep["agent_id"] == agent_id
     assert dep["target"] == "dev"
-    assert dep["status"] == "requested"
+    assert dep["status"] == "ready"
+    assert dep["local_path"]  # not empty; staged code path
 
     # List deployments
     resp_list = client.get(f"/agents/{agent_id}/deployments")

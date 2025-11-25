@@ -14,16 +14,29 @@ from .client import AgentClient
 
 @dataclass
 class LocalRunConfig:
+    """Configuration for running an agent locally via the CLI.
+
+    Attributes
+    ----------
+    base_url:
+        URL of the Agent Repository backend.
+    workdir:
+        Directory under which agent repos are cloned/cached.
+    inputs_path:
+        Optional path to a JSON file containing inputs to the agent.
+    target:
+        Logical deployment target name (not used for logging anymore, but kept
+        for future compatibility).
+    """
+
     base_url: str = "http://localhost:8000"
     workdir: Path = Path.home() / ".academy" / "agents"
-    inputs_path: Path | None = None  # if None, use {} as inputs
-    target: str = "local"            # logical target name, used if you also hit /deploy
+    inputs_path: Path | None = None
+    target: str = "local"
 
 
 def _parse_entrypoint(entrypoint: str) -> Tuple[str, str]:
-    """
-    Split 'module.path:AttrName' into ('module.path', 'AttrName').
-    """
+    """Split 'module.path:AttrName' into ('module.path', 'AttrName')."""
     if ":" not in entrypoint:
         raise ValueError(f"Invalid entrypoint {entrypoint!r}, expected 'module:attr'")
     module_path, attr_name = entrypoint.split(":", 1)
@@ -35,8 +48,7 @@ def _parse_entrypoint(entrypoint: str) -> Tuple[str, str]:
 
 
 def _ensure_repo_checked_out(repo_url: str, commit: str | None, dest_dir: Path) -> None:
-    """
-    Clone or update a git repository into dest_dir.
+    """Clone or update a git repository into dest_dir.
 
     Requires git to be installed on the system.
     """
@@ -49,20 +61,20 @@ def _ensure_repo_checked_out(repo_url: str, commit: str | None, dest_dir: Path) 
             check=True,
         )
     else:
-        # Fetch updates (optional)
+        # Fetch updates
         subprocess.run(
             ["git", "-C", str(dest_dir), "fetch"],
             check=True,
         )
 
     if commit:
-        # Check out the specific commit
+        # Check out specific commit
         subprocess.run(
             ["git", "-C", str(dest_dir), "checkout", commit],
             check=True,
         )
     else:
-        # Otherwise, stay on default branch
+        # Otherwise, stay on current HEAD
         subprocess.run(
             ["git", "-C", str(dest_dir), "checkout", "HEAD"],
             check=True,
@@ -70,14 +82,15 @@ def _ensure_repo_checked_out(repo_url: str, commit: str | None, dest_dir: Path) 
 
 
 def _load_inputs(inputs_path: Path | None) -> Dict[str, Any]:
+    """Load JSON inputs from a file, or return an empty dict if not provided."""
     if inputs_path is None:
         return {}
     if not inputs_path.exists():
-        raise FileNotFoundError(f"Inputs file not found: {os.getcwd()}/{inputs_path}")
+        raise FileNotFoundError(f"Inputs file not found: {inputs_path}")
     with inputs_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
-        raise ValueError("Inputs JSON must contain an object at the top level (mapping)")
+        raise ValueError("Inputs JSON must contain a top-level object (mapping).")
     return data
 
 
@@ -85,10 +98,17 @@ def run_local(
     identifier: str,
     cfg: LocalRunConfig,
 ) -> Dict[str, Any]:
-    """
-    Run an agent implementation locally based on its spec in the repository.
+    """Run an agent implementation locally based on its registry spec.
 
-    identifier: agent id (UUID) or exact name.
+    This function:
+      1. Fetches the agent spec from the backend.
+      2. Clones/updates the agent's git_repo into cfg.workdir.
+      3. Imports the entrypoint object.
+      4. Loads inputs from cfg.inputs_path.
+      5. Calls the agent with those inputs.
+
+    It no longer records deployments in the registry; it is purely an
+    execution helper for local development.
     """
     client = AgentClient(base_url=cfg.base_url)
 
@@ -107,13 +127,13 @@ def run_local(
     if not entrypoint:
         raise RuntimeError("Agent does not specify entrypoint; cannot run locally.")
 
-    # Decide checkout path: workdir/<agent-name>
+    # Checkout path: workdir/<agent-name>
     agent_name = agent.get("name", "unknown-agent")
     dest_dir = cfg.workdir / agent_name
 
     _ensure_repo_checked_out(git_repo, git_commit, dest_dir)
 
-    # Put repo on sys.path so imports can find it
+    # Make repo importable
     repo_path_str = str(dest_dir.resolve())
     if repo_path_str not in sys.path:
         sys.path.insert(0, repo_path_str)
@@ -123,11 +143,9 @@ def run_local(
     module = importlib.import_module(module_path)
     target_obj = getattr(module, attr_name)
 
-    # Inputs
     inputs = _load_inputs(cfg.inputs_path)
 
-    # Call convention: if it's a class, instantiate and call run(**inputs).
-    # If it's a function, call function(**inputs).
+    # If it's a class, instantiate and call .run(**inputs)
     if isinstance(target_obj, type):
         instance = target_obj()
         if not hasattr(instance, "run"):
@@ -138,12 +156,5 @@ def run_local(
 
     if not isinstance(result, dict):
         raise RuntimeError("Agent run() must return a dict for now.")
-
-    # Optional: create a stub deployment record with target 'local'
-    try:
-        client.deploy_agent(agent["id"], target=cfg.target)
-    except Exception:
-        # Don't fail the run if deployment logging fails
-        pass
 
     return result

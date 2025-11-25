@@ -105,11 +105,13 @@ def create_deployment(
     db: Session,
     agent_id: str,
     deployment_in: DeploymentCreate,
+    local_path: Optional[str] = None,
+    status: str = "requested",
 ) -> Optional[Deployment]:
     """
     Create a deployment record for an agent.
 
-    Returns None if the agent does not exist.
+    For local targets, local_path may point to the staged code directory.
     """
     # Ensure agent exists
     agent = db.get(models.Agent, agent_id)
@@ -120,7 +122,8 @@ def create_deployment(
         id=str(uuid4()),
         agent_id=agent_id,
         target=deployment_in.target,
-        status="requested",
+        status=status,
+        local_path=local_path,
     )
     db.add(db_dep)
     db.commit()
@@ -135,3 +138,24 @@ def list_deployments_for_agent(db: Session, agent_id: str) -> List[Deployment]:
     deps = q.all()
     return [Deployment.model_validate(d) for d in deps]
 
+def get_latest_ready_deployment(
+    db: Session,
+    agent_id: str,
+    target: str,
+) -> Optional[Deployment]:
+    """
+    Return the most recent 'ready' deployment for a given agent and target.
+    """
+    q = (
+        db.query(models.Deployment)
+        .filter(
+            models.Deployment.agent_id == agent_id,
+            models.Deployment.target == target,
+            models.Deployment.status == "ready",
+        )
+        .order_by(models.Deployment.created_at.desc())
+    )
+    db_dep = q.first()
+    if db_dep is None:
+        return None
+    return Deployment.model_validate(db_dep)

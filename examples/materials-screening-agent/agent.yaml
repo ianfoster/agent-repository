@@ -1,0 +1,38 @@
+name: materials-screening-agent
+version: "0.1.0"
+description: >
+  Demo agent that assigns a simple "stability" score to each input material
+  and classifies them as promising, borderline, or poor.
+
+agent_type: task
+tags: ["example", "demo", "materials", "screening"]
+owner: "ian"
+
+git_repo: "https://github.com/ianfoster/agent-repository"
+git_commit: ""      # optional: can pin a specific commit SHA if desired
+container_image: "" # not used yet
+entrypoint: "agents_demo.materials_screening:MaterialsScreeningAgent"
+
+inputs:
+  materials:
+    description: "List of material identifiers to screen, e.g. Fe2O3, TiO2"
+    type: "json"
+    required: true
+
+outputs:
+  results:
+    description: "List of per-material scores and labels"
+    type: "json"
+    required: true
+
+a2a_card:
+  name: "materials-screening-agent"
+  url: "https://github.com/ianfoster/agent-repository/tree/main/examples/materials-screening-agent"
+  description: "Demo materials screening agent that returns a stability score and qualitative label for each material."
+  version: "0.1.0"
+  protocolVersion: "0.2.6"
+  capabilities: {}
+  skills: []
+  defaultInputModes: ["application/json"]
+  defaultOutputModes: ["application/json"]
+  supportsAuthenticatedExtendedCard: false

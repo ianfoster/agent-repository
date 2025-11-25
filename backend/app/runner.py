@@ -52,46 +52,54 @@ def _ensure_repo_checked_out(repo_url: str, commit: str | None, dest_dir: Path) 
             check=True,
         )
     else:
-        # Stay on HEAD
+        # Otherwise, stay on current HEAD
         subprocess.run(
             ["git", "-C", str(dest_dir), "checkout", "HEAD"],
             check=True,
         )
 
 
-def run_agent_locally(
-    agent: AgentSpec,
-    request: RunRequest,
-    workdir: Path | None = None,
-) -> Dict[str, Any]:
+def stage_agent_code(agent: AgentSpec, workdir: Path, target: str) -> Path:
     """
-    Run an agent implementation locally based on its spec.
+    Stage an agent's code locally by cloning/updating its git_repo.
 
-    This is the backend equivalent of 'run-local' in the CLI.
+    Returns the path to the staged code for this agent/target combination.
     """
     git_repo = agent.git_repo
     git_commit = agent.git_commit or None
-    entrypoint = agent.entrypoint
-
     if not git_repo:
-        raise RuntimeError("Agent does not specify git_repo; cannot run locally.")
+        raise RuntimeError("Agent does not specify git_repo; cannot deploy.")
+
+    # e.g., ~/.academy/agents/<agent-name>/<target>
+    agent_name = agent.name or "unknown-agent"
+    dest_dir = workdir / agent_name / target
+
+    # Skip git operations in tests if AGENTS_SKIP_GIT is set
+    if os.getenv("AGENTS_SKIP_GIT", "").lower() in {"1", "true", "yes"}:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        return dest_dir
+
+    _ensure_repo_checked_out(git_repo, git_commit, dest_dir)
+    return dest_dir
+
+
+def run_agent_locally_from_staged(
+    agent: AgentSpec,
+    request: RunRequest,
+    staged_path: Path,
+) -> Dict[str, Any]:
+    """
+    Run an agent using code staged at staged_path.
+
+    This does NOT perform any git operations; it assumes the code has already
+    been cloned/updated by a prior deployment.
+    """
+    entrypoint = agent.entrypoint
     if not entrypoint:
         raise RuntimeError("Agent does not specify entrypoint; cannot run locally.")
 
-    # Decide checkout path
-    if workdir is None:
-        # Allow override via env, otherwise use ~/.academy/agents
-        root = os.getenv("AGENTS_WORKDIR")
-        workdir = Path(root) if root else Path.home() / ".academy" / "agents"
-
-    agent_name = agent.name or "unknown-agent"
-    dest_dir = workdir / agent_name
-
-    # Clone or update repo
-    _ensure_repo_checked_out(git_repo, git_commit, dest_dir)
-
-    # Put repo on sys.path so imports can find it
-    repo_path_str = str(dest_dir.resolve())
+    # Make staged repo importable
+    repo_path_str = str(staged_path.resolve())
     if repo_path_str not in sys.path:
         sys.path.insert(0, repo_path_str)
 
@@ -100,10 +108,9 @@ def run_agent_locally(
     module = importlib.import_module(module_path)
     target_obj = getattr(module, attr_name)
 
-    inputs = request.inputs or {}
+    inputs: Dict[str, Any] = request.inputs or {}
 
-    # Call convention: if it's a class, instantiate and call run(**inputs).
-    # If it's a function, call function(**inputs).
+    # If it's a class, instantiate and call .run(**inputs)
     if isinstance(target_obj, type):
         instance = target_obj()
         if not hasattr(instance, "run"):

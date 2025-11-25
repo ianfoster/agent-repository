@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from .schemas import AgentSpec, AgentCreate, Deployment, DeploymentCreate, RunRequest, RunResult
-from .runner import run_agent_locally
+from .schemas import (
+    AgentSpec,
+    AgentCreate,
+    Deployment,
+    DeploymentCreate,
+    RunRequest,
+    RunResult,
+)
+from .runner import stage_agent_code, run_agent_locally_from_staged
 from .database import Base, engine, get_db
 from . import crud
 
@@ -84,7 +93,7 @@ def validate_agent(
 
 
 # ----------------------------------------------------------------------
-# Deployment stubs
+# Deployment: stage code from GitHub into a local path
 # ----------------------------------------------------------------------
 
 
@@ -95,14 +104,33 @@ def deploy_agent(
     db: Session = Depends(get_db),
 ) -> Deployment:
     """
-    Create a stub deployment record for an agent.
+    Deploy (stage) an agent's code to a logical target.
 
-    This does not actually run anything; it simply records that an agent
-    was asked to be deployed to a given target.
+    For local targets, this clones/updates the agent's git_repo into a
+    deterministic directory under AGENTS_WORKDIR (or ~/.academy/agents),
+    and records that path in the Deployment record with status='ready'.
     """
-    dep = crud.create_deployment(db, str(agent_id), payload)
-    if dep is None:
+    agent = crud.get_agent(db, str(agent_id))
+    if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    root = os.getenv("AGENTS_WORKDIR")
+    workdir = Path(root) if root else Path.home() / ".academy" / "agents"
+
+    try:
+        staged_path = stage_agent_code(agent, workdir, payload.target)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Deployment failed: {e}") from e
+
+    dep = crud.create_deployment(
+        db,
+        str(agent_id),
+        payload,
+        local_path=str(staged_path),
+        status="ready",
+    )
+    if dep is None:
+        raise HTTPException(status_code=500, detail="Failed to record deployment")
     return dep
 
 
@@ -117,6 +145,11 @@ def list_deployments(
     return crud.list_deployments_for_agent(db, str(agent_id))
 
 
+# ----------------------------------------------------------------------
+# Run: execute previously staged code for a given target
+# ----------------------------------------------------------------------
+
+
 @app.post("/agents/{agent_id}/run", response_model=RunResult)
 def run_agent(
     agent_id: UUID,
@@ -124,31 +157,29 @@ def run_agent(
     db: Session = Depends(get_db),
 ) -> RunResult:
     """
-    Execute an agent implementation locally on the backend host.
+    Execute an agent implementation using an existing deployment.
 
-    This:
-      1. fetches the agent spec
-      2. clones/updates git_repo
-      3. imports the entrypoint
-      4. calls run(**inputs)
-      5. records a stub Deployment with the requested target
-      6. returns outputs + deployment
+    This endpoint:
+      1. looks up a 'ready' Deployment for (agent_id, payload.target),
+      2. runs the agent's entrypoint using the staged code at that deployment's path,
+      3. returns the outputs together with the deployment metadata.
+
+    If no suitable deployment exists, a 409 is returned with guidance to deploy first.
     """
     agent = crud.get_agent(db, str(agent_id))
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    try:
-        outputs = run_agent_locally(agent, payload)
-    except Exception as e:
-        # You might want more structured error handling/logging later
-        raise HTTPException(status_code=500, detail=f"Agent run failed: {e}") from e
+    dep = crud.get_latest_ready_deployment(db, str(agent_id), payload.target)
+    if dep is None or not dep.local_path:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No ready deployment for target {payload.target!r}. Deploy this agent first.",
+        )
 
-    # Record a deployment stub
-    dep = crud.create_deployment(
-        db,
-        str(agent_id),
-        DeploymentCreate(target=payload.target),
-    )
+    try:
+        outputs = run_agent_locally_from_staged(agent, payload, Path(dep.local_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent run failed: {e}") from e
 
     return RunResult(outputs=outputs, deployment=dep)
