@@ -124,6 +124,9 @@ const App: React.FC = () => {
     setDeploymentsError(null);
     setLastRunOutputs(null);
 
+    // Reset deploy target when switching agents
+    setDeployTarget("local-ui");
+
     try {
       setSelectedLoading(true);
       const detail = await fetchAgent(agent.id);
@@ -180,6 +183,12 @@ const App: React.FC = () => {
     }
   };
 
+  // Whether there is at least one ready deployment for the current target
+  const hasReadyDeploymentForTarget =
+    deployments.some(
+      (d) => d.target === deployTarget && d.status === "ready"
+    ) && deployTarget.trim().length > 0;
+
   const handleRunSelected = async () => {
     if (!selectedAgentId) return;
 
@@ -199,7 +208,7 @@ const App: React.FC = () => {
     } catch (err: any) {
       setInputsError(
         err?.message ??
-          'Failed to parse JSON. Ensure it is a valid JSON object (e.g. {"key": "value"}).'
+          'Failed to parse JSON. Ensure it is a valid JSON object (e.g. { "key": "value" }).'
       );
       return;
     }
@@ -242,6 +251,30 @@ const App: React.FC = () => {
     } finally {
       setDeploying(false);
     }
+  };
+
+  const handleLoadExampleInputs = () => {
+    if (!selectedAgent) return;
+
+    let example: any = {};
+    if (selectedAgent.name === "materials-screening-agent") {
+      example = {
+        materials: ["Fe2O3", "TiO2", "PbS", "Cu2O"],
+      };
+    } else if (selectedAgent.name === "stats-demo-agent") {
+      example = {
+        values: [1, 2, 3.5, 10],
+      };
+    } else if (selectedAgent.name === "simple-demo-agent") {
+      example = {
+        name: "Ian",
+      };
+    } else {
+      return;
+    }
+
+    setInputsJson(JSON.stringify(example, null, 2));
+    setInputsError(null);
   };
 
   return (
@@ -662,9 +695,9 @@ const App: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Deploy / Run section */}
+                {/* DEPLOY section */}
                 <div style={{ marginBottom: "0.75rem" }}>
-                  <strong>Deploy &amp; Run locally:</strong>
+                  <h4 style={{ margin: "0 0 0.25rem 0" }}>Deploy</h4>
                   <div
                     style={{
                       marginTop: "0.25rem",
@@ -711,37 +744,41 @@ const App: React.FC = () => {
                     )}
                     <button
                       type="button"
-                      onClick={handleRunSelected}
-                      disabled={deploying}
-                      style={{
-                        padding: "0.2rem 0.6rem",
-                        borderRadius: "0.4rem",
-                        border: "1px solid #444",
-                        background: deploying ? "#eee" : "#fff",
-                        cursor: deploying ? "default" : "pointer",
-                        fontSize: "0.8rem",
-                      }}
-                    >
-                      {deploying ? "Running…" : "Run agent"}
-                    </button>
-                    <button
-                      type="button"
                       onClick={handleDeployOnly}
-                      disabled={deploying}
+                      disabled={deploying || !deployTarget.trim()}
                       style={{
                         padding: "0.2rem 0.6rem",
                         borderRadius: "0.4rem",
                         border: "1px solid #888",
                         background: deploying ? "#eee" : "#fff",
-                        cursor: deploying ? "default" : "pointer",
+                        cursor:
+                          deploying || !deployTarget.trim()
+                            ? "default"
+                            : "pointer",
                         fontSize: "0.8rem",
                       }}
                     >
                       {deploying ? "Deploying…" : "Deploy (stage code)"}
                     </button>
+                    <span style={{ fontSize: "0.8rem", color: "#555" }}>
+                      {hasReadyDeploymentForTarget
+                        ? `Deployed to "${deployTarget}".`
+                        : deployTarget.trim()
+                        ? `Not yet deployed to "${deployTarget}".`
+                        : "Specify a target to deploy."}
+                    </span>
                   </div>
+                  {deploymentsError && (
+                    <div style={{ color: "red", marginTop: "0.25rem" }}>
+                      {deploymentsError}
+                    </div>
+                  )}
+                </div>
 
-                  <div style={{ marginTop: "0.5rem" }}>
+                {/* RUN section */}
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <h4 style={{ margin: "0 0 0.25rem 0" }}>Run</h4>
+                  <div style={{ marginBottom: "0.5rem" }}>
                     <div
                       style={{
                         fontSize: "0.8rem",
@@ -749,9 +786,11 @@ const App: React.FC = () => {
                         marginBottom: "0.25rem",
                       }}
                     >
-                      <strong>Run inputs (JSON):</strong> must be a JSON object, e.g.{" "}
-                      <code>{'{ "name": "Ian" }'}</code> or{" "}
-                      <code>{'{ "values": [1,2,3] }'}</code>
+                      <strong>Run inputs (JSON):</strong>{" "}
+                      <span>
+                        e.g. <code>{'{ "name": "Ian" }'}</code> or{" "}
+                        <code>{'{ "values": [1,2,3] }'}</code>
+                      </span>
                     </div>
                     <textarea
                       value={inputsJson}
@@ -782,11 +821,53 @@ const App: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {deploymentsError && (
-                    <div style={{ color: "red", marginTop: "0.25rem" }}>
-                      {deploymentsError}
-                    </div>
-                  )}
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={handleRunSelected}
+                      disabled={deploying || !hasReadyDeploymentForTarget}
+                      style={{
+                        padding: "0.2rem 0.6rem",
+                        borderRadius: "0.4rem",
+                        border: "1px solid #444",
+                        background:
+                          deploying || !hasReadyDeploymentForTarget
+                            ? "#eee"
+                            : "#fff",
+                        cursor:
+                          deploying || !hasReadyDeploymentForTarget
+                            ? "default"
+                            : "pointer",
+                        fontSize: "0.8rem",
+                      }}
+                    >
+                      {deploying ? "Running…" : "Run agent"}
+                    </button>
+                    {selectedAgent &&
+                      (selectedAgent.name === "materials-screening-agent" ||
+                        selectedAgent.name === "stats-demo-agent" ||
+                        selectedAgent.name === "simple-demo-agent") && (
+                        <button
+                          type="button"
+                          onClick={handleLoadExampleInputs}
+                          style={{
+                            padding: "0.2rem 0.6rem",
+                            borderRadius: "0.4rem",
+                            border: "1px solid #888",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          Load example inputs
+                        </button>
+                      )}
+                    {!hasReadyDeploymentForTarget && deployTarget.trim() && (
+                      <span style={{ fontSize: "0.8rem", color: "#a00" }}>
+                        Deploy this agent to "{deployTarget}" before running.
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Deployment history */}
@@ -914,8 +995,7 @@ const App: React.FC = () => {
                     "—"
                   )}
                   <br />
-                  <strong>Commit:</strong>{" "}
-                  {selectedAgent.git_commit ?? "—"}
+                  <strong>Commit:</strong> {selectedAgent.git_commit ?? "—"}
                   <br />
                   <strong>Container image:</strong>{" "}
                   {selectedAgent.container_image ?? "—"}
