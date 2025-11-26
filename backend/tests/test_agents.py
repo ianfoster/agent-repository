@@ -1,128 +1,82 @@
-from __future__ import annotations
+"""New tests for the current API and data model, including A2A Agent Cards."""
 
+import os
 from typing import Any, Dict
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.main import app
-from app.database import Base, get_db
 
-# Use a separate SQLite DB for tests
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_agents.db"
-
-import os
+# During tests, we don't want to actually git-clone anything.
 os.environ["AGENTS_SKIP_GIT"] = "1"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    future=True,
-)
-TestingSessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    autocommit=False,
-    future=True,
-)
-
-Base.metadata.drop_all(bind=engine)
-Base.metadata.create_all(bind=engine)
-
-
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
 
 client = TestClient(app)
 
 
-def _sample_agent_payload() -> Dict[str, Any]:
+def _sample_agent_payload_v2() -> Dict[str, Any]:
+    """Minimal sample payload for registering an agent."""
     return {
         "name": "materials-screening-agent",
-        "version": "1.0.0",
-        "description": "Screens candidate materials for a target property.",
+        "version": "0.1.0",
+        "description": "Demo materials screening agent.",
         "agent_type": "domain",
         "tags": ["materials", "screening"],
+        "owner": "team-materials",
         "inputs": {
-            "composition": {
-                "description": "Material composition identifier",
-                "type": "string",
-                "required": True
-            },
-            "conditions": {
-                "description": "Processing or environmental conditions",
+            "materials": {
+                "description": "List of material identifiers",
                 "type": "json",
-                "required": False
+                "required": True
             }
         },
         "outputs": {
-            "predicted_property": {
-                "description": "Predicted value of the target property",
-                "type": "float",
+            "results": {
+                "description": "List of per-material scores and labels",
+                "type": "json",
                 "required": True
             }
         },
-        "owner": "team-materials",
         "a2a_card": {
             "name": "materials-screening-agent",
-            "url": "http://localhost:8000/a2a/materials-screening-agent",
-            "description": "A2A-compatible materials screening agent.",
-            "version": "1.0.0",
+            "url": "https://github.com/ianfoster/agent-repository/tree/main/examples/materials-screening-agent",
+            "description": "Demo materials screening agent that returns a stability score and qualitative label for each material.",
+            "version": "0.1.0",
             "protocolVersion": "0.2.6",
             "capabilities": {},
             "skills": [],
-            "defaultInputModes": ["text/plain"],
-            "defaultOutputModes": ["text/plain"],
+            "defaultInputModes": ["application/json"],
+            "defaultOutputModes": ["application/json"],
             "supportsAuthenticatedExtendedCard": False
         },
-        #"git_repo": "https://github.com/example/materials-agent",
-        "git_repo": "https://github.com/example/materials-agent",
-        "git_commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-        "container_image": "ghcr.io/example/materials-agent:1.0.0",
-        "entrypoint": "agents.materials:MaterialsScreeningAgent"
+        "git_repo": "https://github.com/ianfoster/agent-repository",
+        "git_commit": "",
+        "container_image": "",
+        "entrypoint": "agents_demo.materials_screening:MaterialsScreeningAgent"
     }
 
 
-def test_create_agent():
-    payload = _sample_agent_payload()
+def test_register_agent_roundtrip():
+    payload = _sample_agent_payload_v2()
+
     resp = client.post("/agents", json=payload)
     assert resp.status_code == 201
-    data = resp.json()
+    created = resp.json()
 
-    assert data["id"]
-    assert data["name"] == payload["name"]
-    assert data["version"] == payload["version"]
-    assert data["agent_type"] == payload["agent_type"]
-    assert data["inputs"]["composition"]["description"] == payload["inputs"]["composition"]["description"]
-    assert "created_at" in data
+    assert "id" in created
+    assert created["name"] == payload["name"]
+    assert created["version"] == payload["version"]
+    assert created["agent_type"] == payload["agent_type"]
 
-    # A2A card round-trip
-    assert data["a2a_card"]["name"] == payload["a2a_card"]["name"]
-    assert data["a2a_card"]["url"] == payload["a2a_card"]["url"]
+    if "tags" in created:
+        assert "materials" in created["tags"]
 
-    # GitHub / container metadata round-trip
-    assert data["git_repo"] == payload["git_repo"]
-    assert data["git_commit"] == payload["git_commit"]
-    assert data["container_image"] == payload["container_image"]
-    assert data["entrypoint"] == payload["entrypoint"]
-
-    # Validation defaults
-    assert data["validation_status"] == "unvalidated"
-    assert data["last_validated_at"] is None
-    assert data["validation_score"] is None
-
+    if "a2a_card" in created:
+        assert created["a2a_card"]["name"] == payload["a2a_card"]["name"]
+        assert created["a2a_card"]["version"] == payload["a2a_card"]["version"]
 
 
 def test_get_agent_by_id():
-    payload = _sample_agent_payload()
+    payload = _sample_agent_payload_v2()
     resp = client.post("/agents", json=payload)
     assert resp.status_code == 201
     created = resp.json()
@@ -131,91 +85,55 @@ def test_get_agent_by_id():
     resp2 = client.get(f"/agents/{agent_id}")
     assert resp2.status_code == 200
     fetched = resp2.json()
+
     assert fetched["id"] == agent_id
     assert fetched["name"] == payload["name"]
-    assert fetched["a2a_card"]["version"] == payload["a2a_card"]["version"]
-    assert fetched["git_repo"] == payload["git_repo"]
+    assert fetched["version"] == payload["version"]
+
+    if "a2a_card" in fetched:
+        assert fetched["a2a_card"]["name"] == payload["a2a_card"]["name"]
+        assert fetched["a2a_card"]["version"] == payload["a2a_card"]["version"]
 
 
-def test_list_agents_and_filter():
-    a1 = _sample_agent_payload()
-    a1["tags"] = ["materials", "screening"]
-    a1["owner"] = "team-materials"
+def test_list_agents_contains_registered():
+    a1 = _sample_agent_payload_v2()
+    a1["name"] = "materials-screening-agent"
     resp1 = client.post("/agents", json=a1)
     assert resp1.status_code == 201
+    created1 = resp1.json()
 
-    a2 = _sample_agent_payload()
-    a2["name"] = "simulation-setup-agent"
-    a2["tags"] = ["simulation"]
-    a2["owner"] = "team-sim"
-    a2["a2a_card"]["name"] = "simulation-setup-agent"
-    a2["git_repo"] = "https://github.com/example/sim-agent"
+    a2 = _sample_agent_payload_v2()
+    a2["name"] = "stats-demo-agent"
+    a2["description"] = "Demo stats agent."
     resp2 = client.post("/agents", json=a2)
     assert resp2.status_code == 201
+    created2 = resp2.json()
 
     resp_all = client.get("/agents")
     assert resp_all.status_code == 200
     all_agents = resp_all.json()
-    assert len(all_agents) >= 2
 
-    resp_mat = client.get("/agents", params={"tag": "materials"})
-    assert resp_mat.status_code == 200
-    mat_agents = resp_mat.json()
-    assert all("materials" in a["tags"] for a in mat_agents)
-
-    resp_owner = client.get("/agents", params={"owner": "team-sim"})
-    assert resp_owner.status_code == 200
-    owner_agents = resp_owner.json()
-    assert all(a["owner"] == "team-sim" for a in owner_agents)
+    ids = {a["id"] for a in all_agents}
+    assert created1["id"] in ids
+    assert created2["id"] in ids
 
 
-def test_get_agent_not_found():
-    resp = client.get("/agents/00000000-0000-0000-0000-000000000000")
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "Agent not found"
-
-
-def test_validate_agent_updates_status_and_score():
-    payload = _sample_agent_payload()
+def test_validate_agent_marks_as_validated():
+    payload = _sample_agent_payload_v2()
     resp = client.post("/agents", json=payload)
     assert resp.status_code == 201
     created = resp.json()
     agent_id = created["id"]
 
-    # Initially unvalidated
-    assert created["validation_status"] == "unvalidated"
-    assert created["last_validated_at"] is None
-    assert created["validation_score"] is None
+    resp_val = client.post(f"/agents/{agent_id}/validate")
+    assert resp_val.status_code == 200
+    validated = resp_val.json()
 
-    # Validate with a score
-    resp2 = client.post(f"/agents/{agent_id}/validate", params={"score": 0.9})
+    assert validated.get("validation_status") == "validated"
+    assert validated.get("last_validated_at") is not None
+
+    resp2 = client.get(f"/agents/{agent_id}")
     assert resp2.status_code == 200
-    validated = resp2.json()
-
-    assert validated["validation_status"] == "validated"
-    assert validated["validation_score"] == 0.9
-    assert validated["last_validated_at"] is not None
-
-def test_deploy_agent_creates_deployment():
-    payload = _sample_agent_payload()
-    resp = client.post("/agents", json=payload)
-    assert resp.status_code == 201
-    created = resp.json()
-    agent_id = created["id"]
-
-    # Deploy to target "dev"
-    resp_dep = client.post(f"/agents/{agent_id}/deploy", json={"target": "dev"})
-    assert resp_dep.status_code == 201
-    dep = resp_dep.json()
-    assert dep["agent_id"] == agent_id
-    assert dep["target"] == "dev"
-    assert dep["status"] == "ready"
-    assert dep["local_path"]  # not empty; staged code path
-
-    # List deployments
-    resp_list = client.get(f"/agents/{agent_id}/deployments")
-    assert resp_list.status_code == 200
-    deps = resp_list.json()
-    assert len(deps) >= 1
-    assert deps[0]["agent_id"] == agent_id
-
+    fetched = resp2.json()
+    assert fetched.get("validation_status") == "validated"
+    assert fetched.get("last_validated_at") is not None

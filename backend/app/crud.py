@@ -1,3 +1,4 @@
+# backend/app/crud.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,84 +8,66 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from . import models
-from .schemas import AgentCreate, AgentSpec, Deployment, DeploymentCreate
+from .schemas import AgentCardCreate, AgentCard, LocationCreate, Location, DeploymentCreate, Deployment, Instance
 
 
-# ----------------------------------------------------------------------
-# Agents
-# ----------------------------------------------------------------------
+# ---------- Agent implementations ----------
 
-
-def create_agent(db: Session, agent_in: AgentCreate) -> AgentSpec:
-    """
-    Create a new agent row and return it as an AgentSpec.
-    """
-    db_agent = models.Agent(
+def create_agent(db: Session, card_in: AgentCardCreate) -> AgentCard:
+    db_obj = models.AgentImplementation(
         id=str(uuid4()),
-        name=agent_in.name,
-        version=agent_in.version,
-        description=agent_in.description,
-        agent_type=agent_in.agent_type,
-        tags=agent_in.tags,
-        inputs={k: v.model_dump() for k, v in agent_in.inputs.items()},
-        outputs={k: v.model_dump() for k, v in agent_in.outputs.items()},
-        owner=agent_in.owner,
-        a2a_card=agent_in.a2a_card.model_dump() if agent_in.a2a_card else None,
-        git_repo=agent_in.git_repo,
-        git_commit=agent_in.git_commit,
-        container_image=agent_in.container_image,
-        entrypoint=agent_in.entrypoint,
-        validation_status=agent_in.validation_status or "unvalidated",
-        last_validated_at=agent_in.last_validated_at,
-        validation_score=agent_in.validation_score,
+        name=card_in.name,
+        version=card_in.version,
+        description=card_in.description,
+        agent_type=card_in.agent_type,
+        tags=card_in.tags,
+        inputs_schema=card_in.inputs_schema,
+        outputs_schema=card_in.outputs_schema,
+        git_repo=card_in.git_repo,
+        git_commit=card_in.git_commit,
+        container_image=card_in.container_image,
+        entrypoint=card_in.entrypoint,
+        validation_inputs=card_in.validation_inputs,
+        validation_status="unvalidated",
+        validation_score=card_in.validation_score,
+        last_validated_at=card_in.last_validated_at,
     )
-    db.add(db_agent)
+    db.add(db_obj)
     db.commit()
-    db.refresh(db_agent)
+    db.refresh(db_obj)
+    return AgentCard.model_validate(db_obj)
 
-    return AgentSpec.model_validate(db_agent)
+
+def list_agents(db: Session) -> List[AgentCard]:
+    objs = db.query(models.AgentImplementation).all()
+    return [AgentCard.model_validate(o) for o in objs]
 
 
-def get_agent(db: Session, agent_id: str) -> Optional[AgentSpec]:
-    obj = db.get(models.Agent, agent_id)
+def get_agent(db: Session, agent_id: str) -> Optional[AgentCard]:
+    obj = db.get(models.AgentImplementation, agent_id)
     if obj is None:
         return None
-    return AgentSpec.model_validate(obj)
+    return AgentCard.model_validate(obj)
 
 
-def list_agents(
-    db: Session,
-    name: Optional[str] = None,
-    agent_type: Optional[str] = None,
-    tag: Optional[str] = None,
-    owner: Optional[str] = None,
-) -> List[AgentSpec]:
-    q = db.query(models.Agent)
-
-    if name is not None:
-        q = q.filter(models.Agent.name == name)
-    if agent_type is not None:
-        q = q.filter(models.Agent.agent_type == agent_type)
-    if owner is not None:
-        q = q.filter(models.Agent.owner == owner)
-
-    results = q.all()
-
-    if tag is not None:
-        results = [a for a in results if a.tags and tag in a.tags]
-
-    return [AgentSpec.model_validate(a) for a in results]
+def find_agent_by_name_version(
+    db: Session, name: str, version: str
+) -> Optional[AgentCard]:
+    obj = (
+        db.query(models.AgentImplementation)
+        .filter(
+            models.AgentImplementation.name == name,
+            models.AgentImplementation.version == version,
+        )
+        .one_or_none()
+    )
+    return AgentCard.model_validate(obj) if obj else None
 
 
-def validate_agent(
-    db: Session,
-    agent_id: str,
-    score: Optional[float] = None,
-) -> Optional[AgentSpec]:
-    """
-    Mark an agent as validated and update validation metadata.
-    """
-    obj = db.get(models.Agent, agent_id)
+def mark_agent_validated(
+    db: Session, agent_id: str, score: Optional[float] = None
+) -> Optional[AgentCard]:
+    obj = db.get(models.AgentImplementation, agent_id)
     if obj is None:
         return None
     obj.validation_status = "validated"
@@ -93,69 +76,165 @@ def validate_agent(
         obj.validation_score = score
     db.commit()
     db.refresh(obj)
-    return AgentSpec.model_validate(obj)
+    return AgentCard.model_validate(obj)
 
 
-# ----------------------------------------------------------------------
-# Deployments
-# ----------------------------------------------------------------------
+# ---------- Locations ----------
 
+def create_location(db: Session, loc_in: LocationCreate) -> Location:
+    db_obj = models.Location(
+        id=str(uuid4()),
+        name=loc_in.name,
+        location_type=loc_in.location_type,
+        config=loc_in.config,
+        is_active=loc_in.is_active,
+    )
+    db.add(db_obj)
+    db.commit()
+    db.refresh(db_obj)
+    return Location.model_validate(db_obj)
+
+
+def list_locations(db: Session) -> List[Location]:
+    objs = db.query(models.Location).all()
+    return [Location.model_validate(o) for o in objs]
+
+
+def get_location(db: Session, loc_id: str) -> Optional[Location]:
+    obj = db.get(models.Location, loc_id)
+    return Location.model_validate(obj) if obj else None
+
+
+def find_location_by_name(db: Session, name: str) -> Optional[Location]:
+    obj = (
+        db.query(models.Location)
+        .filter(models.Location.name == name)
+        .one_or_none()
+    )
+    return Location.model_validate(obj) if obj else None
+
+
+# ---------- Deployments ----------
 
 def create_deployment(
     db: Session,
-    agent_id: str,
-    deployment_in: DeploymentCreate,
+    dep_in: DeploymentCreate,
     local_path: Optional[str] = None,
     status: str = "requested",
+    metadata: Optional[dict] = None,
 ) -> Optional[Deployment]:
     """
-    Create a deployment record for an agent.
+    Create or update a deployment record for an agent on a location.
 
-    For local targets, local_path may point to the staged code directory.
+    Idempotent per (agent_id, location_id): if a non-deleted deployment
+    already exists, update it instead of inserting a new row.
     """
-    # Ensure agent exists
-    agent = db.get(models.Agent, agent_id)
-    if agent is None:
+    agent_id_str = str(dep_in.agent_id)
+    location_id_str = str(dep_in.location_id)
+
+    # Ensure agent and location exist
+    agent = db.get(models.AgentImplementation, agent_id_str)
+    loc = db.get(models.Location, location_id_str)
+    if agent is None or loc is None:
         return None
 
+    # See if there is an existing non-deleted deployment
+    existing = (
+        db.query(models.Deployment)
+        .filter(
+            models.Deployment.agent_id == agent_id_str,
+            models.Deployment.location_id == location_id_str,
+            models.Deployment.status != "deleted",
+        )
+        .order_by(models.Deployment.created_at.desc())
+        .first()
+    )
+
+    if existing:
+        # Update in-place
+        if local_path is not None:
+            existing.local_path = local_path
+        existing.status = status
+        if metadata:
+            # assuming you used "meta" on the ORM model
+            if existing.meta is None:
+                existing.meta = metadata
+            else:
+                existing.meta.update(metadata)
+        db.commit()
+        db.refresh(existing)
+        return Deployment.model_validate(existing)
+
+    # No existing deployment → create new
     db_dep = models.Deployment(
         id=str(uuid4()),
-        agent_id=agent_id,
-        target=deployment_in.target,
+        agent_id=agent_id_str,
+        location_id=location_id_str,
         status=status,
         local_path=local_path,
+        meta=metadata or {},
     )
     db.add(db_dep)
     db.commit()
     db.refresh(db_dep)
-
     return Deployment.model_validate(db_dep)
 
+def list_deployments_for_agent(
+    db: Session, agent_id: str
+) -> List[Deployment]:
+    objs = (
+        db.query(models.Deployment)
+        .filter(models.Deployment.agent_id == agent_id)
+        .order_by(models.Deployment.created_at.desc())
+        .all()
+    )
+    return [Deployment.model_validate(o) for o in objs]
 
-def list_deployments_for_agent(db: Session, agent_id: str) -> List[Deployment]:
-    q = db.query(models.Deployment).filter(models.Deployment.agent_id == agent_id)
-    q = q.order_by(models.Deployment.created_at.desc())
-    deps = q.all()
-    return [Deployment.model_validate(d) for d in deps]
 
 def get_latest_ready_deployment(
-    db: Session,
-    agent_id: str,
-    target: str,
+    db: Session, agent_id: str, location_id: str
 ) -> Optional[Deployment]:
-    """
-    Return the most recent 'ready' deployment for a given agent and target.
-    """
     q = (
         db.query(models.Deployment)
         .filter(
             models.Deployment.agent_id == agent_id,
-            models.Deployment.target == target,
+            models.Deployment.location_id == location_id,
             models.Deployment.status == "ready",
         )
         .order_by(models.Deployment.created_at.desc())
     )
-    db_dep = q.first()
-    if db_dep is None:
+    obj = q.first()
+    return Deployment.model_validate(obj) if obj else None
+
+
+# ---------- Instances (running agents) ----------
+
+def create_instance(
+    db: Session, deployment_id: str, handle: Optional[str], endpoint: Optional[str]
+) -> Instance:
+    db_inst = models.AgentInstance(
+        id=str(uuid4()),
+        deployment_id=deployment_id,
+        status="running",
+        handle=handle,
+        endpoint=endpoint,
+        created_at=datetime.utcnow(),
+    )
+    db.add(db_inst)
+    db.commit()
+    db.refresh(db_inst)
+    return Instance.model_validate(db_inst)
+
+
+def update_instance_status(
+    db: Session, instance_id: str, status: str
+) -> Optional[Instance]:
+    obj = db.get(models.AgentInstance, instance_id)
+    if obj is None:
         return None
-    return Deployment.model_validate(db_dep)
+    obj.status = status
+    if status in {"stopped", "failed"}:
+        obj.stopped_at = datetime.utcnow()
+    db.commit()
+    db.refresh(obj)
+    return Instance.model_validate(obj)

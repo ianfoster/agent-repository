@@ -1,281 +1,1607 @@
 import React, { useEffect, useState, FormEvent } from "react";
-import type { Agent, AgentFilters, HealthResponse, Deployment, RunResult } from "./api";
-import {
-  fetchHealth,
-  fetchAgents,
-  fetchAgent,
-  createSampleAgent,
-  validateAgent,
-  runAgent,
-  deployAgent,
-  fetchDeployments,
-} from "./api";
+
+type Agent = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  agent_type?: string;
+  tags?: string[];
+  owner?: string | null;
+  validation_status?: string;
+  last_validated_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type Location = {
+  id: string;
+  name: string;
+  location_type: string;
+  config: Record<string, any>;
+  is_active: boolean;
+  created_at?: string;
+};
+
+type Deployment = {
+  id: string;
+  agent_id: string;
+  location_id: string;
+  status: string;
+  last_error?: string | null;
+  local_path?: string | null;
+  metadata?: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type Instance = {
+  instance_id: string;
+  agent_id: string;
+  status: string;
+  location_name?: string;
+  lastResult?: any;
+};
+
+type Tab = "agents" | "locations" | "deployments";
 
 const App: React.FC = () => {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("agents");
+
+  // Health
+  const [health, setHealth] = useState<{ status: string; service: string } | null>(
+    null
+  );
   const [healthError, setHealthError] = useState<string | null>(null);
 
+  // Agents
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentsError, setAgentsError] = useState<string | null>(null);
   const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
 
-  const [filters, setFilters] = useState<AgentFilters>({
-    name: "",
-    agent_type: "",
-    tag: "",
-    owner: "",
-  });
-
-  const [creating, setCreating] = useState(false);
-  const [validating, setValidating] = useState(false);
-
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [selectedAgentError, setSelectedAgentError] = useState<string | null>(null);
-  const [selectedLoading, setSelectedLoading] = useState(false);
 
+  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentVersion, setNewAgentVersion] = useState("0.1.0");
+  const [newAgentDescription, setNewAgentDescription] = useState("");
+  const [newAgentType, setNewAgentType] = useState("task");
+  const [newAgentOwner, setNewAgentOwner] = useState("");
+  const [newAgentTags, setNewAgentTags] = useState("");
+  const [newAgentGitRepo, setNewAgentGitRepo] = useState("");
+  const [newAgentGitCommit, setNewAgentGitCommit] = useState("");
+  const [newAgentEntrypoint, setNewAgentEntrypoint] = useState("");
+
+  const [registerAgentBusy, setRegisterAgentBusy] = useState(false);
+
+  // Locations
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
+
+  const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationType, setNewLocationType] = useState("local");
+  const [newLocationConfig, setNewLocationConfig] = useState<string>("{}");
+  const [registerLocationBusy, setRegisterLocationBusy] = useState(false);
+
+  // Deployments
   const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
   const [deploymentsLoading, setDeploymentsLoading] = useState(false);
+  const [deploymentsError, setDeploymentsError] = useState<string | null>(null);
 
-  const [deployTarget, setDeployTarget] = useState<string>("local-ui");
-  const [deploying, setDeploying] = useState(false);
+  const [deployAgentId, setDeployAgentId] = useState<string>("");
+  const [deployLocationId, setDeployLocationId] = useState<string>("");
+  const [deployBusy, setDeployBusy] = useState(false);
 
-  const [inputsJson, setInputsJson] = useState<string>("{}");
-  const [inputsError, setInputsError] = useState<string | null>(null);
+  // Instances (Phase 3)
+  const [instances, setInstances] = useState<Instance[]>([]);
+  const [instancesError, setInstancesError] = useState<string | null>(null);
 
-  const [lastRunOutputs, setLastRunOutputs] = useState<any | null>(null);
+  const [instanceAgentId, setInstanceAgentId] = useState<string>("");
+  const [instanceLocationName, setInstanceLocationName] = useState<string>("");
 
-  const [copyIdStatus, setCopyIdStatus] = useState<"idle" | "copied" | "error">("idle");
+  const [instanceInitJson, setInstanceInitJson] = useState<string>("{}");
 
-  useEffect(() => {
-    fetchHealth()
-      .then(setHealth)
-      .catch((err) => setHealthError(err.message));
+  const [startingInstance, setStartingInstance] = useState(false);
+  const [callingInstanceId, setCallingInstanceId] = useState<string | null>(null);
 
-    loadAgents();
-  }, []);
+  const [callActionName, setCallActionName] = useState("greet");
+  const [callPayloadJson, setCallPayloadJson] = useState<string>("{}");
 
-  const loadAgents = async (opts?: AgentFilters) => {
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  async function fetchJSON<T = any>(url: string, options: RequestInit = {}): Promise<T> {
+    const resp = await fetch(url, options);
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${text}`);
+    }
+    return resp.json();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Loaders
+  // ---------------------------------------------------------------------------
+
+  const loadHealth = async () => {
+    try {
+      const data = await fetchJSON<{ status: string; service: string }>("/api/health");
+      setHealth(data);
+      setHealthError(null);
+    } catch (err: any) {
+      setHealthError(err.message ?? String(err));
+      setHealth(null);
+    }
+  };
+
+  const loadAgents = async () => {
     try {
       setAgentsLoading(true);
-      const data = await fetchAgents(opts);
+      const data = await fetchJSON<Agent[]>("/api/agents");
       setAgents(data);
       setAgentsError(null);
+      if (selectedAgent) {
+        const stillThere = data.find((a) => a.id === selectedAgent.id);
+        setSelectedAgent(stillThere ?? null);
+      }
     } catch (err: any) {
-      setAgentsError(err?.message ?? String(err));
+      setAgentsError(err.message ?? String(err));
     } finally {
       setAgentsLoading(false);
     }
   };
 
-  const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFilters((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+  const loadLocations = async () => {
+    try {
+      setLocationsLoading(true);
+      const data = await fetchJSON<Location[]>("/api/locations");
+      setLocations(data);
+      setLocationsError(null);
+    } catch (err: any) {
+      setLocationsError(err.message ?? String(err));
+    } finally {
+      setLocationsLoading(false);
+    }
   };
 
-  const handleFilterSubmit = async (e: FormEvent) => {
+  const loadDeploymentsForAgent = async (agentId: string) => {
+    if (!agentId) {
+      setDeployments([]);
+      return;
+    }
+    try {
+      setDeploymentsLoading(true);
+      const data = await fetchJSON<Deployment[]>(
+        `/api/agents/${agentId}/deployments`
+      );
+      setDeployments(data);
+      setDeploymentsError(null);
+    } catch (err: any) {
+      setDeploymentsError(err.message ?? String(err));
+      setDeployments([]);
+    } finally {
+      setDeploymentsLoading(false);
+    }
+  };
+
+  // Initial load
+  useEffect(() => {
+    loadHealth();
+    loadAgents();
+    loadLocations();
+  }, []);
+
+  // Reload deployments when selected deployAgentId changes
+  useEffect(() => {
+    if (deployAgentId) {
+      loadDeploymentsForAgent(deployAgentId);
+    } else {
+      setDeployments([]);
+    }
+  }, [deployAgentId]);
+
+  // ---------------------------------------------------------------------------
+  // Agent actions
+  // ---------------------------------------------------------------------------
+
+  const handleRegisterAgent = async (e: FormEvent) => {
     e.preventDefault();
-    const nonEmpty: AgentFilters = {};
-    if (filters.name) nonEmpty.name = filters.name;
-    if (filters.agent_type) nonEmpty.agent_type = filters.agent_type;
-    if (filters.tag) nonEmpty.tag = filters.tag;
-    if (filters.owner) nonEmpty.owner = filters.owner;
-    await loadAgents(nonEmpty);
-    setSelectedAgentId(null);
-    setSelectedAgent(null);
-    setSelectedAgentError(null);
-  };
+    if (!newAgentName.trim()) {
+      setAgentsError("Agent name is required.");
+      return;
+    }
 
-  const handleFilterClear = async () => {
-    setFilters({
-      name: "",
-      agent_type: "",
-      tag: "",
-      owner: "",
-    });
-    await loadAgents();
-    setSelectedAgentId(null);
-    setSelectedAgent(null);
-    setSelectedAgentError(null);
-  };
+    const payload: any = {
+      name: newAgentName.trim(),
+      version: newAgentVersion.trim() || "0.1.0",
+      description: newAgentDescription.trim() || "(no description)",
+      agent_type: newAgentType.trim() || "task",
+      tags: newAgentTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0),
+      owner: newAgentOwner.trim() || null,
+      git_repo: newAgentGitRepo.trim() || null,
+      git_commit: newAgentGitCommit.trim() || null,
+      entrypoint: newAgentEntrypoint.trim() || null,
+    };
 
-  const handleCreateSample = async () => {
     try {
-      setCreating(true);
-      const created = await createSampleAgent();
-      setAgents((prev) => [created, ...prev]);
-      setAgentsError(null);
+      setRegisterAgentBusy(true);
+      await fetchJSON("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setNewAgentName("");
+      setNewAgentVersion("0.1.0");
+      setNewAgentDescription("");
+      setNewAgentType("task");
+      setNewAgentOwner("");
+      setNewAgentTags("");
+      setNewAgentGitRepo("");
+      setNewAgentGitCommit("");
+      setNewAgentEntrypoint("");
+      await loadAgents();
     } catch (err: any) {
-      setAgentsError(err?.message ?? String(err));
+      setAgentsError(err.message ?? String(err));
     } finally {
-      setCreating(false);
+      setRegisterAgentBusy(false);
     }
   };
 
-  const handleSelectAgent = async (agent: Agent) => {
-    setSelectedAgentId(agent.id);
-    setSelectedAgent(null);
-    setSelectedAgentError(null);
-    setDeployments([]);
-    setDeploymentsError(null);
-    setLastRunOutputs(null);
-
-    // Reset deploy target when switching agents
-    setDeployTarget("local-ui");
-
+  const handleValidateAgent = async (agent: Agent) => {
     try {
-      setSelectedLoading(true);
-      const detail = await fetchAgent(agent.id);
-      setSelectedAgent(detail);
-
-      try {
-        setDeploymentsLoading(true);
-        const deps = await fetchDeployments(agent.id);
-        setDeployments(deps);
-        setDeploymentsError(null);
-      } catch (err: any) {
-        setDeploymentsError(err?.message ?? String(err));
-      } finally {
-        setDeploymentsLoading(false);
-      }
-    } catch (err: any) {
-      setSelectedAgentError(err?.message ?? String(err));
-    } finally {
-      setSelectedLoading(false);
-    }
-  };
-
-  const handleValidateSelected = async () => {
-    if (!selectedAgentId) return;
-    try {
-      setValidating(true);
-      const updated = await validateAgent(selectedAgentId);
-      setSelectedAgent(updated);
+      const url = `/api/agents/${agent.id}/validate`;
+      const updated = await fetchJSON<Agent>(url, { method: "POST" });
       setAgents((prev) =>
         prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
       );
-      setSelectedAgentError(null);
-    } catch (err: any) {
-      setSelectedAgentError(err?.message ?? String(err));
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const handleCopyId = async () => {
-    if (!selectedAgent) return;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(selectedAgent.id);
-        setCopyIdStatus("copied");
-        setTimeout(() => setCopyIdStatus("idle"), 1500);
-      } else {
-        setCopyIdStatus("error");
-        setTimeout(() => setCopyIdStatus("idle"), 1500);
-      }
-    } catch {
-      setCopyIdStatus("error");
-      setTimeout(() => setCopyIdStatus("idle"), 1500);
-    }
-  };
-
-  // Whether there is at least one ready deployment for the current target
-  const hasReadyDeploymentForTarget =
-    deployments.some(
-      (d) => d.target === deployTarget && d.status === "ready"
-    ) && deployTarget.trim().length > 0;
-
-  const handleRunSelected = async () => {
-    if (!selectedAgentId) return;
-
-    // Parse JSON inputs
-    let parsedInputs: any = {};
-    try {
-      if (inputsJson.trim()) {
-        const parsed = JSON.parse(inputsJson);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          throw new Error(
-            'Inputs JSON must be an object, e.g. {"name": "Ian"} or {"values": [1,2,3]}'
-          );
-        }
-        parsedInputs = parsed;
-      }
-      setInputsError(null);
-    } catch (err: any) {
-      setInputsError(
-        err?.message ??
-          'Failed to parse JSON. Ensure it is a valid JSON object (e.g. { "key": "value" }).'
+      setSelectedAgent((prev) =>
+        prev && prev.id === updated.id ? { ...prev, ...updated } : prev
       );
+    } catch (err: any) {
+      setAgentsError(err.message ?? String(err));
+    }
+  };
+
+  const handleUnregisterAgent = async (agent: Agent) => {
+    if (!window.confirm(`Unregister agent "${agent.name}"? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await fetchJSON(`/api/agents/${agent.id}`, { method: "DELETE" });
+      await loadAgents();
+      if (selectedAgent && selectedAgent.id === agent.id) {
+        setSelectedAgent(null);
+      }
+    } catch (err: any) {
+      setAgentsError(err.message ?? String(err));
+    }
+  };
+
+  const handleSelectAgent = (agent: Agent) => {
+    setSelectedAgent(agent);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Location actions
+  // ---------------------------------------------------------------------------
+
+  const handleRegisterLocation = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newLocationName.trim()) {
+      setLocationsError("Location name is required.");
       return;
     }
 
-    try {
-      setDeploying(true);
-      const result: RunResult = await runAgent(
-        selectedAgentId,
-        deployTarget || "local-ui",
-        parsedInputs
-      );
-      setLastRunOutputs(result.outputs);
-      if (result.deployment) {
-        setDeployments((prev) => [result.deployment, ...prev]);
-      }
-      setDeploymentsError(null);
-    } catch (err: any) {
-      const msg = err?.message ?? String(err);
-      if (msg.includes("No ready deployment for target")) {
-        setDeploymentsError(
-          `No ready deployment for target "${deployTarget}". Please deploy this agent to this target first.`
+    let configObj: Record<string, any> = {};
+    if (newLocationConfig.trim()) {
+      try {
+        configObj = JSON.parse(newLocationConfig);
+      } catch (err: any) {
+        setLocationsError(
+          err?.message ??
+            "Failed to parse location config JSON. Ensure it is a valid JSON object."
         );
-      } else {
-        setDeploymentsError(msg);
+        return;
       }
-    } finally {
-      setDeploying(false);
     }
-  };
 
-  const handleDeployOnly = async () => {
-    if (!selectedAgentId) return;
+    const payload: any = {
+      name: newLocationName.trim(),
+      location_type: newLocationType.trim() || "local",
+      config: configObj,
+      is_active: true,
+    };
+
     try {
-      setDeploying(true);
-      const dep = await deployAgent(selectedAgentId, deployTarget || "local");
-      setDeployments((prev) => [dep, ...prev]);
-      setDeploymentsError(null);
+      setRegisterLocationBusy(true);
+      await fetchJSON("/api/locations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setNewLocationName("");
+      setNewLocationType("local");
+      setNewLocationConfig("{}");
+      await loadLocations();
     } catch (err: any) {
-      setDeploymentsError(err?.message ?? String(err));
+      setLocationsError(err.message ?? String(err));
     } finally {
-      setDeploying(false);
+      setRegisterLocationBusy(false);
     }
   };
 
-  const handleLoadExampleInputs = () => {
-    if (!selectedAgent) return;
-
-    let example: any = {};
-    if (selectedAgent.name === "materials-screening-agent") {
-      example = {
-        materials: ["Fe2O3", "TiO2", "PbS", "Cu2O"],
-      };
-    } else if (selectedAgent.name === "stats-demo-agent") {
-      example = {
-        values: [1, 2, 3.5, 10],
-      };
-    } else if (selectedAgent.name === "simple-demo-agent") {
-      example = {
-        name: "Ian",
-      };
-    } else {
+  const handleUnregisterLocation = async (loc: Location) => {
+    if (
+      !window.confirm(
+        `Unregister location "${loc.name}"? This will prevent future deployments.`
+      )
+    ) {
       return;
     }
-
-    setInputsJson(JSON.stringify(example, null, 2));
-    setInputsError(null);
+    try {
+      await fetchJSON(`/api/locations/${loc.id}`, { method: "DELETE" });
+      await loadLocations();
+    } catch (err: any) {
+      setLocationsError(err.message ?? String(err));
+    }
   };
+
+  // ---------------------------------------------------------------------------
+  // Deployment actions
+  // ---------------------------------------------------------------------------
+
+  const handleDeploy = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!deployAgentId) {
+      setDeploymentsError("Please select an agent to deploy.");
+      return;
+    }
+    if (!deployLocationId) {
+      setDeploymentsError("Please select a location.");
+      return;
+    }
+    setDeploymentsError(null);
+
+    const payload = {
+      agent_id: deployAgentId,
+      location_id: deployLocationId,
+    };
+
+    try {
+      setDeployBusy(true);
+      const dep = await fetchJSON<Deployment>("/api/deployments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      // Refresh deployments for this agent (prepend new one)
+      setDeployments((prev) => [dep, ...prev]);
+    } catch (err: any) {
+      setDeploymentsError(err.message ?? String(err));
+    } finally {
+      setDeployBusy(false);
+    }
+  };
+
+  const handleDeleteDeployment = async (dep: Deployment) => {
+    if (!window.confirm(`Delete deployment ${dep.id}?`)) {
+      return;
+    }
+    try {
+      await fetchJSON(`/api/deployments/${dep.id}`, { method: "DELETE" });
+      // reload for current agent
+      if (deployAgentId) {
+        await loadDeploymentsForAgent(deployAgentId);
+      }
+    } catch (err: any) {
+      setDeploymentsError(err.message ?? String(err));
+    }
+  };
+
+
+// ---------------------------------------------------------------------------
+// Instance actions (Phase 3)
+// ---------------------------------------------------------------------------
+
+  const handleStartInstance = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!instanceAgentId || !instanceLocationName) {
+      setInstancesError("Select an agent and a location name.");
+      return;
+    }
+  
+    let initInputs: Record<string, any> = {};
+    if (instanceInitJson.trim()) {
+      try {
+        initInputs = JSON.parse(instanceInitJson);
+      } catch (err: any) {
+        setInstancesError("Failed to parse init JSON.");
+        return;
+      }
+    }
+  
+    try {
+      setStartingInstance(true);
+      setInstancesError(null);
+  
+      const resp = await fetchJSON<{
+        instance_id: string;
+        agent_id: string;
+        status: string;
+      }>(`/api/agents/${instanceAgentId}/instances`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location_name: instanceLocationName,
+          init_inputs: initInputs,
+        }),
+      });
+  
+      setInstances((prev) => [
+        {
+          instance_id: resp.instance_id,
+          agent_id: resp.agent_id,
+          status: resp.status,
+          location_name: instanceLocationName,
+        },
+        ...prev,
+      ]);
+    } catch (err: any) {
+      setInstancesError(err.message ?? String(err));
+    } finally {
+      setStartingInstance(false);
+    }
+  };
+  
+  const handleCallInstance = async (inst: Instance) => {
+    let payload: Record<string, any> = {};
+    if (callPayloadJson.trim()) {
+      try {
+        payload = JSON.parse(callPayloadJson);
+      } catch {
+        setInstancesError("Failed to parse call payload JSON.");
+        return;
+      }
+    }
+  
+    try {
+      setCallingInstanceId(inst.instance_id);
+      const resp = await fetchJSON<{ result: any }>(
+        `/api/instances/${inst.instance_id}/call`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: callActionName,
+            payload,
+          }),
+        }
+      );
+  
+      setInstances((prev) =>
+        prev.map((i) =>
+          i.instance_id === inst.instance_id
+            ? { ...i, lastResult: resp.result }
+            : i
+        )
+      );
+    } catch (err: any) {
+      setInstancesError(err.message ?? String(err));
+    } finally {
+      setCallingInstanceId(null);
+    }
+  };
+  
+  const handleStopInstance = async (inst: Instance) => {
+    try {
+      await fetchJSON(`/api/instances/${inst.instance_id}/stop`, {
+        method: "POST",
+      });
+  
+      setInstances((prev) =>
+        prev.map((i) =>
+          i.instance_id === inst.instance_id ? { ...i, status: "stopped" } : i
+        )
+      );
+    } catch (err: any) {
+      setInstancesError(err.message ?? String(err));
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render helpers
+  // ---------------------------------------------------------------------------
+
+  const renderHealth = () => (
+    <section
+      style={{
+        marginBottom: "1rem",
+        padding: "0.75rem",
+        borderRadius: "0.5rem",
+        border: "1px solid #ddd",
+      }}
+    >
+      <h2 style={{ marginTop: 0 }}>Backend health</h2>
+      {healthError && <p style={{ color: "red" }}>Error: {healthError}</p>}
+      {health && !healthError ? (
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            fontSize: "0.9rem",
+            color: "#155724",
+            background: "#d4edda",
+            border: "1px solid #c3e6cb",
+            borderRadius: "0.5rem",
+            padding: "0.3rem 0.6rem",
+            marginTop: "0.25rem",
+          }}
+        >
+          <span style={{ fontSize: "1.1rem" }}>✅</span>
+          <span>Backend is healthy</span>
+        </div>
+      ) : !health && !healthError ? (
+        <p>Checking health…</p>
+      ) : null}
+    </section>
+  );
+
+  const renderAgentsTab = () => (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2.2fr) minmax(0, 2fr)", gap: "1rem" }}>
+      {/* Left: create + list */}
+      <div>
+        {/* Register new agent */}
+        <section
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "1px solid #ddd",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>Register new agent implementation</h2>
+          <form onSubmit={handleRegisterAgent}>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Name{" "}
+                <input
+                  type="text"
+                  value={newAgentName}
+                  onChange={(e) => setNewAgentName(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  required
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Version{" "}
+                <input
+                  type="text"
+                  value={newAgentVersion}
+                  onChange={(e) => setNewAgentVersion(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Type{" "}
+                <input
+                  type="text"
+                  value={newAgentType}
+                  onChange={(e) => setNewAgentType(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  placeholder="task, workflow, planner…"
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Description
+                <textarea
+                  value={newAgentDescription}
+                  onChange={(e) => setNewAgentDescription(e.target.value)}
+                  rows={3}
+                  style={{
+                    width: "100%",
+                    padding: "0.25rem",
+                    fontFamily: "inherit",
+                    fontSize: "0.85rem",
+                  }}
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Owner{" "}
+                <input
+                  type="text"
+                  value={newAgentOwner}
+                  onChange={(e) => setNewAgentOwner(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  placeholder="team or user"
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Tags (comma-separated){" "}
+                <input
+                  type="text"
+                  value={newAgentTags}
+                  onChange={(e) => setNewAgentTags(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  placeholder="materials, screening, example"
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Git repo{" "}
+                <input
+                  type="text"
+                  value={newAgentGitRepo}
+                  onChange={(e) => setNewAgentGitRepo(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  placeholder="https://github.com/..."
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Git commit{" "}
+                <input
+                  type="text"
+                  value={newAgentGitCommit}
+                  onChange={(e) => setNewAgentGitCommit(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  placeholder="optional SHA"
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Entrypoint{" "}
+                <input
+                  type="text"
+                  value={newAgentEntrypoint}
+                  onChange={(e) => setNewAgentEntrypoint(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  placeholder="module.path:ClassName"
+                />
+              </label>
+            </div>
+            <button
+              type="submit"
+              disabled={registerAgentBusy}
+              style={{
+                padding: "0.4rem 0.8rem",
+                borderRadius: "0.4rem",
+                border: "1px solid #444",
+                background: registerAgentBusy ? "#eee" : "#fff",
+                cursor: registerAgentBusy ? "default" : "pointer",
+                fontSize: "0.9rem",
+              }}
+            >
+              {registerAgentBusy ? "Registering…" : "Register agent"}
+            </button>
+            {agentsError && (
+              <div style={{ color: "red", marginTop: "0.5rem" }}>{agentsError}</div>
+            )}
+          </form>
+        </section>
+
+        {/* Agent list */}
+        <section
+          style={{
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "1px solid #ddd",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>Registered agents</h2>
+          {agentsLoading ? (
+            <p>Loading agents…</p>
+          ) : agents.length === 0 ? (
+            <p>No agents registered yet.</p>
+          ) : (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.9rem",
+              }}
+            >
+              <thead>
+                <tr>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Name
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Version
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Type
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Owner
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Validation
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((a) => {
+                  const isSelected = selectedAgent && selectedAgent.id === a.id;
+                  const vs = a.validation_status ?? "unvalidated";
+                  return (
+                    <tr
+                      key={a.id}
+                      onClick={() => handleSelectAgent(a)}
+                      style={{
+                        cursor: "pointer",
+                        background: isSelected ? "#eef5ff" : "transparent",
+                      }}
+                    >
+                      <td
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          padding: "0.25rem 0.2rem",
+                        }}
+                      >
+                        {a.name}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          padding: "0.25rem 0.2rem",
+                        }}
+                      >
+                        {a.version}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          padding: "0.25rem 0.2rem",
+                        }}
+                      >
+                        {a.agent_type ?? "—"}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          padding: "0.25rem 0.2rem",
+                        }}
+                      >
+                        {a.owner ?? "—"}
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          padding: "0.25rem 0.2rem",
+                        }}
+                      >
+                        <span
+                          style={{
+                            padding: "0.1rem 0.45rem",
+                            borderRadius: "0.75rem",
+                            border: "1px solid #ccc",
+                            fontSize: "0.75rem",
+                            background:
+                              vs === "validated"
+                                ? "#e6ffed"
+                                : vs === "failed"
+                                ? "#ffe5e5"
+                                : "#fff4e5",
+                            color:
+                              vs === "validated"
+                                ? "#155724"
+                                : vs === "failed"
+                                ? "#a00"
+                                : "#8a6d3b",
+                          }}
+                        >
+                          {vs}
+                        </span>
+                      </td>
+                      <td
+                        style={{
+                          borderBottom: "1px solid #eee",
+                          padding: "0.25rem 0.2rem",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleValidateAgent(a)}
+                          style={{
+                            padding: "0.2rem 0.5rem",
+                            borderRadius: "0.4rem",
+                            border: "1px solid #444",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontSize: "0.8rem",
+                            marginRight: "0.3rem",
+                          }}
+                        >
+                          Validate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleUnregisterAgent(a)}
+                          style={{
+                            padding: "0.2rem 0.5rem",
+                            borderRadius: "0.4rem",
+                            border: "1px solid #a00",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontSize: "0.8rem",
+                            color: "#a00",
+                          }}
+                        >
+                          Unregister
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </div>
+
+      {/* Right: selected agent details */}
+      <div>
+        <section
+          style={{
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "1px solid #ddd",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>Agent details</h2>
+          {selectedAgent ? (
+            <>
+              <p>
+                <strong>Name:</strong> {selectedAgent.name}{" "}
+                <span style={{ color: "#666" }}>v{selectedAgent.version}</span>
+              </p>
+              <p>
+                <strong>ID:</strong> {selectedAgent.id}
+              </p>
+              <p>
+                <strong>Type:</strong> {selectedAgent.agent_type ?? "—"}
+              </p>
+              <p>
+                <strong>Owner:</strong> {selectedAgent.owner ?? "—"}
+              </p>
+              <p>
+                <strong>Tags:</strong>{" "}
+                {selectedAgent.tags && selectedAgent.tags.length > 0
+                  ? selectedAgent.tags.join(", ")
+                  : "—"}
+              </p>
+              <p>
+                <strong>Validation:</strong>{" "}
+                {selectedAgent.validation_status ?? "unvalidated"}
+                {selectedAgent.last_validated_at && (
+                  <>
+                    {" "}
+                    <span style={{ color: "#666" }}>
+                      (last:{" "}
+                      {new Date(
+                        selectedAgent.last_validated_at
+                      ).toLocaleString()}
+                      )
+                    </span>
+                  </>
+                )}
+              </p>
+              <p>
+                <strong>Description:</strong>{" "}
+                {selectedAgent.description ?? "(none)"}
+              </p>
+              <hr />
+              <details>
+                <summary style={{ cursor: "pointer" }}>Raw JSON</summary>
+                <pre
+                  style={{
+                    background: "#f7f7f7",
+                    padding: "0.5rem",
+                    borderRadius: "0.25rem",
+                    fontSize: "0.8rem",
+                    marginTop: "0.25rem",
+                    maxHeight: "16rem",
+                    overflow: "auto",
+                  }}
+                >
+                  {JSON.stringify(selectedAgent, null, 2)}
+                </pre>
+              </details>
+            </>
+          ) : (
+            <p>Select an agent to see details.</p>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+
+  const renderLocationsTab = () => (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 2fr)", gap: "1rem" }}>
+      <div>
+        {/* Register new location */}
+        <section
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "1px solid #ddd",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>Register new location</h2>
+          <form onSubmit={handleRegisterLocation}>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Name{" "}
+                <input
+                  type="text"
+                  value={newLocationName}
+                  onChange={(e) => setNewLocationName(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                  required
+                />
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Type{" "}
+                <select
+                  value={newLocationType}
+                  onChange={(e) => setNewLocationType(e.target.value)}
+                  style={{ width: "100%", padding: "0.25rem" }}
+                >
+                  <option value="local">local</option>
+                  <option value="hpc">hpc</option>
+                  <option value="lab">lab</option>
+                  <option value="cloud">cloud</option>
+                  <option value="other">other</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                Config (JSON)
+                <textarea
+                  value={newLocationConfig}
+                  onChange={(e) => setNewLocationConfig(e.target.value)}
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    padding: "0.25rem",
+                    fontFamily: "monospace",
+                    fontSize: "0.8rem",
+                  }}
+                />
+              </label>
+            </div>
+            <button
+              type="submit"
+              disabled={registerLocationBusy}
+              style={{
+                padding: "0.4rem 0.8rem",
+                borderRadius: "0.4rem",
+                border: "1px solid #444",
+                background: registerLocationBusy ? "#eee" : "#fff",
+                cursor: registerLocationBusy ? "default" : "pointer",
+                fontSize: "0.9rem",
+              }}
+            >
+              {registerLocationBusy ? "Registering…" : "Register location"}
+            </button>
+            {locationsError && (
+              <div style={{ color: "red", marginTop: "0.5rem" }}>{locationsError}</div>
+            )}
+          </form>
+        </section>
+
+        {/* Locations list */}
+        <section
+          style={{
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "1px solid #ddd",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>Registered locations</h2>
+          {locationsLoading ? (
+            <p>Loading locations…</p>
+          ) : locations.length === 0 ? (
+            <p>No locations registered yet.</p>
+          ) : (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: "0.9rem",
+              }}
+            >
+              <thead>
+                <tr>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Name
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Type
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Active
+                  </th>
+                  <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {locations.map((loc) => (
+                  <tr key={loc.id}>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #eee",
+                        padding: "0.25rem 0.2rem",
+                      }}
+                    >
+                      {loc.name}
+                    </td>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #eee",
+                        padding: "0.25rem 0.2rem",
+                      }}
+                    >
+                      {loc.location_type}
+                    </td>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #eee",
+                        padding: "0.25rem 0.2rem",
+                      }}
+                    >
+                      {loc.is_active ? "yes" : "no"}
+                    </td>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #eee",
+                        padding: "0.25rem 0.2rem",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleUnregisterLocation(loc)}
+                        style={{
+                          padding: "0.2rem 0.5rem",
+                          borderRadius: "0.4rem",
+                          border: "1px solid #a00",
+                          background: "#fff",
+                          cursor: "pointer",
+                          fontSize: "0.8rem",
+                          color: "#a00",
+                        }}
+                      >
+                        Unregister
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </div>
+
+      {/* Right: placeholder for location details */}
+      <div>
+        <section
+          style={{
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "1px solid #ddd",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>Location details</h2>
+          <p>Select a location from the list to inspect its config in future phases.</p>
+        </section>
+      </div>
+    </div>
+  );
+
+  const renderInstancesTab = () => {
+    // Only locations where this agent has a READY deployment
+    const readyInstanceLocations = deployments
+      .filter((d) => d.agent_id === instanceAgentId && d.status === "ready")
+      .map((d) => {
+        const loc = locations.find((l) => l.id === d.location_id);
+        const a = agents.find((x) => x.id === d.agent_id);
+        return {
+          locationName: loc ? loc.name : d.location_id,
+        label: `${a ? a.name : d.agent_id} (v${a?.version ?? "?"}) @ ${
+          loc ? loc.name : d.location_id
+        }`,
+      };
+    });
+
+  return (
+    <section
+      style={{
+        marginTop: "1rem",
+        padding: "1rem",
+        borderRadius: "0.5rem",
+        border: "1px solid #ddd",
+      }}
+    >
+      <h2>Instances</h2>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
+          gap: "1rem",
+        }}
+      >
+        {/* Left: start instance form */}
+        <div>
+          <h3>Start a new instance</h3>
+          <form onSubmit={handleStartInstance}>
+            <label>
+              Agent
+              <select
+                value={instanceAgentId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setInstanceAgentId(id);
+                  setInstancesError(null);
+                  if (id) {
+                    // reuse your existing loader to fetch deployments for this agent
+                    loadDeploymentsForAgent(id);
+                  } else {
+                    setDeployments([]);
+                  }
+                }}
+                style={{ width: "100%", marginTop: "0.25rem" }}
+              >
+                <option value="">Select agent</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.version})
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "block", marginTop: "0.75rem" }}>
+              Location (with ready deployment)
+              <select
+                value={instanceLocationName}
+                onChange={(e) => setInstanceLocationName(e.target.value)}
+                style={{ width: "100%", marginTop: "0.25rem" }}
+              >
+                <option value="">
+                  {instanceAgentId
+                    ? "Select location"
+                    : "Select an agent first"}
+                </option>
+                {readyInstanceLocations.map((t) => (
+                  <option key={t.locationName} value={t.locationName}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "block", marginTop: "0.75rem" }}>
+              Init inputs (JSON)
+              <textarea
+                value={instanceInitJson}
+                onChange={(e) => setInstanceInitJson(e.target.value)}
+                rows={3}
+                style={{
+                  width: "100%",
+                  marginTop: "0.25rem",
+                  fontFamily: "monospace",
+                  fontSize: "0.8rem",
+                }}
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={startingInstance}
+              style={{ marginTop: "0.75rem" }}
+            >
+              {startingInstance ? "Starting..." : "Start instance"}
+            </button>
+
+            {instancesError && (
+              <p style={{ color: "red", marginTop: "0.5rem" }}>
+                {instancesError}
+              </p>
+            )}
+          </form>
+        </div>
+
+        {/* Right: running instances */}
+        <div>
+          <h3>Running instances (this session)</h3>
+          {instances.length === 0 ? (
+            <p>No instances started yet.</p>
+          ) : (
+            <>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <thead>
+                  <tr>
+                    <th>Instance ID</th>
+                    <th>Agent</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {instances.map((inst) => {
+                    const a = agents.find((x) => x.id === inst.agent_id);
+                    return (
+                      <tr key={inst.instance_id}>
+                        <td>{inst.instance_id}</td>
+                        <td>{a ? a.name : inst.agent_id}</td>
+                        <td>{inst.location_name ?? "?"}</td>
+                        <td>{inst.status}</td>
+                        <td>
+                          <button
+                            onClick={() => handleCallInstance(inst)}
+                            disabled={callingInstanceId === inst.instance_id}
+                          >
+                            {callingInstanceId === inst.instance_id
+                              ? "Calling..."
+                              : "Call"}
+                          </button>
+                          <button
+                            onClick={() => handleStopInstance(inst)}
+                            style={{ marginLeft: "0.5rem" }}
+                          >
+                            Stop
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* Call config + last results */}
+              <div
+                style={{
+                  marginTop: "1rem",
+                  padding: "0.75rem",
+                  borderRadius: "0.5rem",
+                  border: "1px solid #eee",
+                }}
+              >
+                <h4>Call configuration</h4>
+                <label>
+                  Action name
+                  <input
+                    type="text"
+                    value={callActionName}
+                    onChange={(e) => setCallActionName(e.target.value)}
+                    style={{ width: "100%", marginTop: "0.25rem" }}
+                  />
+                </label>
+                <label style={{ display: "block", marginTop: "0.75rem" }}>
+                  Payload (JSON)
+                  <textarea
+                    value={callPayloadJson}
+                    onChange={(e) => setCallPayloadJson(e.target.value)}
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      marginTop: "0.25rem",
+                      fontFamily: "monospace",
+                      fontSize: "0.8rem",
+                    }}
+                  />
+                </label>
+
+                {instances.some((i) => i.lastResult !== undefined) && (
+                  <div style={{ marginTop: "0.75rem" }}>
+                    <h5>Last results</h5>
+                    {instances.map(
+                      (i) =>
+                        i.lastResult !== undefined && (
+                          <div
+                            key={i.instance_id}
+                            style={{
+                              marginBottom: "0.5rem",
+                              padding: "0.5rem",
+                              borderRadius: "0.5rem",
+                              border: "1px solid #ddd",
+                              background: "#fafafa",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "#555",
+                                marginBottom: "0.25rem",
+                              }}
+                            >
+                              Instance <code>{i.instance_id}</code>
+                            </div>
+                            <pre
+                              style={{
+                                margin: 0,
+                                fontSize: "0.8rem",
+                                whiteSpace: "pre-wrap",
+                              }}
+                            >
+                              {JSON.stringify(i.lastResult, null, 2)}
+                            </pre>
+                          </div>
+                        )
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+};
+
+  const renderDeploymentsTab = () => {
+    const selectedDeployAgent = agents.find((a) => a.id === deployAgentId) || null;
+
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2.5fr) minmax(0, 2fr)", gap: "1rem" }}>
+        {/* Left: deploy form + deployments list */}
+        <div>
+          {/* Deploy form */}
+          <section
+            style={{
+              marginBottom: "1rem",
+              padding: "0.75rem",
+              borderRadius: "0.5rem",
+              border: "1px solid #ddd",
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>Deploy registered implementation</h2>
+            <form onSubmit={handleDeploy}>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <label>
+                  Agent{" "}
+                  <select
+                    value={deployAgentId}
+                    onChange={(e) => {
+                      setDeployAgentId(e.target.value);
+                      setDeploymentsError(null);
+                    }}
+                    style={{ width: "100%", padding: "0.25rem" }}
+                  >
+                    <option value="">(select agent)</option>
+                    {agents.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} v{a.version}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={{ marginBottom: "0.5rem" }}>
+                <label>
+                  Location{" "}
+                  <select
+                    value={deployLocationId}
+                    onChange={(e) => {
+                      setDeployLocationId(e.target.value);
+                      setDeploymentsError(null);
+                    }}
+                    style={{ width: "100%", padding: "0.25rem" }}
+                  >
+                    <option value="">(select location)</option>
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} ({loc.location_type})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <button
+                type="submit"
+                disabled={deployBusy}
+                style={{
+                  padding: "0.4rem 0.8rem",
+                  borderRadius: "0.4rem",
+                  border: "1px solid #444",
+                  background: deployBusy ? "#eee" : "#fff",
+                  cursor: deployBusy ? "default" : "pointer",
+                  fontSize: "0.9rem",
+                }}
+              >
+                {deployBusy ? "Deploying…" : "Deploy"}
+              </button>
+              {deploymentsError && (
+                <div style={{ color: "red", marginTop: "0.5rem" }}>
+                  {deploymentsError}
+                </div>
+              )}
+            </form>
+          </section>
+
+          {/* Deployments list */}
+          <section
+            style={{
+              padding: "0.75rem",
+              borderRadius: "0.5rem",
+              border: "1px solid #ddd",
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>
+              Deployments{selectedDeployAgent ? ` for ${selectedDeployAgent.name}` : ""}
+            </h2>
+            {deploymentsLoading ? (
+              <p>Loading deployments…</p>
+            ) : !deployAgentId ? (
+              <p>Select an agent above to view its deployments.</p>
+            ) : deployments.length === 0 ? (
+              <p>No deployments for this agent yet.</p>
+            ) : (
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <thead>
+                  <tr>
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                      Location
+                    </th>
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                      Status
+                    </th>
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                      Created
+                    </th>
+                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deployments.map((d) => {
+                    const loc = locations.find((l) => l.id === d.location_id);
+                    return (
+                      <tr key={d.id}>
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
+                          {loc ? `${loc.name} (${loc.location_type})` : d.location_id}
+                        </td>
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
+                          {d.status}
+                          {d.last_error && (
+                            <span style={{ color: "#a00", marginLeft: "0.5rem" }}>
+                              (error)
+                            </span>
+                          )}
+                        </td>
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
+                          {d.created_at
+                            ? new Date(d.created_at).toLocaleString()
+                            : "—"}
+                        </td>
+                        <td
+                          style={{
+                            borderBottom: "1px solid #eee",
+                            padding: "0.25rem 0.2rem",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDeployment(d)}
+                            style={{
+                              padding: "0.2rem 0.5rem",
+                              borderRadius: "0.4rem",
+                              border: "1px solid #a00",
+                              background: "#fff",
+                              cursor: "pointer",
+                              fontSize: "0.8rem",
+                              color: "#a00",
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </div>
+
+        {/* Right: summary/info */}
+        <div>
+          <section
+            style={{
+              padding: "0.75rem",
+              borderRadius: "0.5rem",
+              border: "1px solid #ddd",
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>About deployments</h2>
+            <p style={{ fontSize: "0.9rem", color: "#444" }}>
+              Use this tab to deploy registered agents to registered locations.
+              Deployments represent staged code and environment for a given
+              agent / location pair.
+            </p>
+            <ul style={{ fontSize: "0.9rem", color: "#444" }}>
+              <li>
+                <strong>Deploy</strong> creates a new deployment record and, in the
+                backend, stages code (e.g., clones from GitHub).
+              </li>
+              <li>
+                <strong>Status</strong> indicates whether staging succeeded (e.g.,
+                <code>ready</code>, <code>failed</code>).
+              </li>
+              <li>
+                <strong>Delete</strong> removes a deployment record (and, later,
+                can trigger cleanup on the location).
+              </li>
+            </ul>
+          </section>
+        </div>
+      </div>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // Main render
+  // ---------------------------------------------------------------------------
 
   return (
     <div
@@ -288,815 +1614,48 @@ const App: React.FC = () => {
     >
       <h1>Academy Agent Repository</h1>
       <p style={{ color: "#555", marginBottom: "1rem" }}>
-        Browse, search, and inspect agents; deploy them from GitHub; and run them locally.
+        Phases 1–2: Manage agent implementations, locations, and deployments.
       </p>
 
-      {/* Health section */}
-      <section
-        style={{
-          marginTop: "0.5rem",
-          padding: "1rem",
-          borderRadius: "0.5rem",
-          border: "1px solid #ddd",
-        }}
-      >
-        <h2>Backend health</h2>
-        {healthError && <p style={{ color: "red" }}>Error: {healthError}</p>}
-        {health && !healthError ? (
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.4rem",
-              fontSize: "0.9rem",
-              color: "#155724",
-              background: "#d4edda",
-              border: "1px solid #c3e6cb",
-              borderRadius: "0.5rem",
-              padding: "0.3rem 0.6rem",
-              marginTop: "0.25rem",
-            }}
-          >
-            <span style={{ fontSize: "1.1rem" }}>✅</span>
-            <span>Backend is healthy</span>
-          </div>
-        ) : !health && !healthError ? (
-          <p>Checking health…</p>
-        ) : null}
-      </section>
+      {renderHealth()}
 
-      {/* Agents list + filters + detail */}
-      <section
-        style={{
-          marginTop: "1.5rem",
-          padding: "1rem",
-          borderRadius: "0.5rem",
-          border: "1px solid #ddd",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: "1rem",
-            alignItems: "center",
-            marginBottom: "0.75rem",
-          }}
-        >
-          <h2 style={{ margin: 0 }}>Agents</h2>
+      {/* Tabs */}
+      <div style={{ marginBottom: "1rem" }}>
+        {(["agents", "locations", "deployments", "instances"] as Tab[]).map((tab) => (
           <button
-            onClick={handleCreateSample}
-            disabled={creating}
+            key={tab}
+            type="button"
+            onClick={() => setActiveTab(tab)}
             style={{
               padding: "0.4rem 0.8rem",
-              borderRadius: "0.4rem",
-              border: "1px solid #444",
-              background: creating ? "#eee" : "#fff",
-              cursor: creating ? "default" : "pointer",
+              borderRadius: "0.5rem 0.5rem 0 0",
+              borderBottom:
+                activeTab === tab ? "2px solid #444" : "1px solid #ddd",
+              borderLeft: "1px solid #ddd",
+              borderRight: "1px solid #ddd",
+              borderTop: "1px solid #ddd",
+              background: activeTab === tab ? "#fff" : "#f5f5f5",
+              cursor: "pointer",
+              marginRight: "0.5rem",
             }}
           >
-            {creating ? "Creating…" : "Create sample agent"}
+            {tab === "agents"
+              ? "Agents"
+              : tab === "locations"
+              ? "Locations"
+              : "Deployments"}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* Filters */}
-        <form
-          onSubmit={handleFilterSubmit}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr)) auto",
-            gap: "0.5rem",
-            alignItems: "end",
-            marginBottom: "0.75rem",
-          }}
-        >
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
-              Name
-            </label>
-            <input
-              type="text"
-              name="name"
-              value={filters.name ?? ""}
-              onChange={handleFilterChange}
-              placeholder="exact name"
-              style={{ width: "100%", padding: "0.25rem" }}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
-              Type
-            </label>
-            <input
-              type="text"
-              name="agent_type"
-              value={filters.agent_type ?? ""}
-              onChange={handleFilterChange}
-              placeholder="task, domain, planner…"
-              style={{ width: "100%", padding: "0.25rem" }}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
-              Tag
-            </label>
-            <input
-              type="text"
-              name="tag"
-              value={filters.tag ?? ""}
-              onChange={handleFilterChange}
-              placeholder="materials, sim, sample…"
-              style={{ width: "100%", padding: "0.25rem" }}
-            />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", color: "#555" }}>
-              Owner
-            </label>
-            <input
-              type="text"
-              name="owner"
-              value={filters.owner ?? ""}
-              onChange={handleFilterChange}
-              placeholder="team or user"
-              style={{ width: "100%", padding: "0.25rem" }}
-            />
-          </div>
-          <div style={{ display: "flex", gap: "0.4rem" }}>
-            <button
-              type="submit"
-              style={{
-                padding: "0.35rem 0.7rem",
-                borderRadius: "0.4rem",
-                border: "1px solid #444",
-                background: "#f5f5f5",
-                cursor: "pointer",
-                fontSize: "0.85rem",
-              }}
-            >
-              Apply
-            </button>
-            <button
-              type="button"
-              onClick={handleFilterClear}
-              style={{
-                padding: "0.35rem 0.7rem",
-                borderRadius: "0.4rem",
-                border: "1px solid #ccc",
-                background: "#fff",
-                cursor: "pointer",
-                fontSize: "0.85rem",
-              }}
-            >
-              Clear
-            </button>
-          </div>
-        </form>
-
-        {agentsError && <p style={{ color: "red" }}>Error: {agentsError}</p>}
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)",
-            gap: "1rem",
-          }}
-        >
-          {/* Agents list */}
-          <div>
-            {agentsLoading ? (
-              <p>Loading agents…</p>
-            ) : agents.length === 0 && !agentsError ? (
-              <p>No agents found.</p>
-            ) : (
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: "0.9rem",
-                }}
-              >
-                <thead>
-                  <tr>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
-                      Name
-                    </th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
-                      Version
-                    </th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
-                      Type
-                    </th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
-                      Owner
-                    </th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
-                      Status
-                    </th>
-                    <th style={{ borderBottom: "1px solid #ccc", textAlign: "left" }}>
-                      Tags
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agents.map((agent) => {
-                    const isSelected = agent.id === selectedAgentId;
-                    return (
-                      <tr
-                        key={agent.id}
-                        onClick={() => handleSelectAgent(agent)}
-                        style={{
-                          cursor: "pointer",
-                          background: isSelected ? "#eef5ff" : "transparent",
-                        }}
-                      >
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          {agent.name}
-                        </td>
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          {agent.version}
-                        </td>
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          {agent.agent_type}
-                        </td>
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          {agent.owner ?? "—"}
-                        </td>
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          <span
-                            style={{
-                              padding: "0.1rem 0.45rem",
-                              borderRadius: "0.75rem",
-                              border: "1px solid #ccc",
-                              fontSize: "0.75rem",
-                              background:
-                                agent.validation_status === "validated"
-                                  ? "#e6ffed"
-                                  : agent.validation_status === "failed"
-                                  ? "#ffe5e5"
-                                  : "#fff4e5",
-                              color:
-                                agent.validation_status === "validated"
-                                  ? "#155724"
-                                  : agent.validation_status === "failed"
-                                  ? "#a00"
-                                  : "#8a6d3b",
-                            }}
-                          >
-                            {agent.validation_status}
-                          </span>
-                          {agent.last_validated_at && (
-                            <div
-                              style={{
-                                fontSize: "0.7rem",
-                                color: "#666",
-                                marginTop: "0.1rem",
-                              }}
-                            >
-                              {new Date(agent.last_validated_at).toLocaleDateString()}
-                            </div>
-                          )}
-                        </td>
-                        <td
-                          style={{
-                            borderBottom: "1px solid #eee",
-                            padding: "0.25rem 0.2rem",
-                          }}
-                        >
-                          {agent.tags?.join(", ") || "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* Agent detail */}
-          <div
-            style={{
-              borderLeft: "1px solid #eee",
-              paddingLeft: "1rem",
-              minHeight: "6rem",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>Agent detail</h3>
-            {selectedAgentError && (
-              <p style={{ color: "red" }}>Error loading agent: {selectedAgentError}</p>
-            )}
-            {selectedLoading && <p>Loading agent…</p>}
-            {!selectedLoading && !selectedAgent && !selectedAgentError && (
-              <p>Select an agent from the table to see details.</p>
-            )}
-            {selectedAgent && !selectedLoading && (
-              <div
-                style={{
-                  fontSize: "0.9rem",
-                  lineHeight: 1.4,
-                  maxHeight: "28rem",
-                  overflow: "auto",
-                }}
-              >
-                <h4 style={{ margin: "0 0 0.25rem 0" }}>
-                  {selectedAgent.name}{" "}
-                  <span style={{ color: "#666" }}>v{selectedAgent.version}</span>
-                </h4>
-
-                <div
-                  style={{
-                    fontSize: "0.8rem",
-                    color: "#666",
-                    marginBottom: "0.35rem",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.4rem",
-                  }}
-                >
-                  <span>
-                    <strong>ID:</strong> {selectedAgent.id}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyId}
-                    style={{
-                      padding: "0.15rem 0.5rem",
-                      borderRadius: "0.4rem",
-                      border: "1px solid #ccc",
-                      background: "#f8f8f8",
-                      fontSize: "0.75rem",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {copyIdStatus === "copied"
-                      ? "Copied!"
-                      : copyIdStatus === "error"
-                      ? "Copy failed"
-                      : "Copy ID"}
-                  </button>
-                </div>
-
-                <p style={{ margin: "0 0 0.5rem 0", color: "#444" }}>
-                  {selectedAgent.description}
-                </p>
-
-                {/* Validation summary */}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <strong>Type:</strong> {selectedAgent.agent_type}{" "}
-                  <strong style={{ marginLeft: "0.75rem" }}>Owner:</strong>{" "}
-                  {selectedAgent.owner ?? "—"}{" "}
-                  <strong style={{ marginLeft: "0.75rem" }}>Created:</strong>{" "}
-                  {new Date(selectedAgent.created_at).toLocaleString()}
-                  <br />
-                  <strong>Validation:</strong>{" "}
-                  <span
-                    style={{
-                      padding: "0.1rem 0.4rem",
-                      borderRadius: "0.75rem",
-                      border: "1px solid #ccc",
-                      fontSize: "0.8rem",
-                      background:
-                        selectedAgent.validation_status === "validated"
-                          ? "#e6ffed"
-                          : "#fff4e5",
-                    }}
-                  >
-                    {selectedAgent.validation_status}
-                  </span>
-                  {selectedAgent.last_validated_at && (
-                    <>
-                      {" "}
-                      <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                        (last:{" "}
-                        {new Date(
-                          selectedAgent.last_validated_at
-                        ).toLocaleString()}
-                        )
-                      </span>
-                    </>
-                  )}
-                </div>
-
-                {/* Validation score + button */}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <strong>Validation score:</strong>{" "}
-                  {typeof selectedAgent.validation_score === "number"
-                    ? selectedAgent.validation_score.toFixed(3)
-                    : "—"}
-                  {"  "}
-                  <button
-                    type="button"
-                    onClick={handleValidateSelected}
-                    disabled={validating}
-                    style={{
-                      marginLeft: "0.75rem",
-                      padding: "0.2rem 0.6rem",
-                      borderRadius: "0.4rem",
-                      border: "1px solid #444",
-                      background: validating ? "#eee" : "#fff",
-                      cursor: validating ? "default" : "pointer",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    {validating ? "Validating…" : "Run validation"}
-                  </button>
-                </div>
-
-                {/* DEPLOY section */}
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <h4 style={{ margin: "0 0 0.25rem 0" }}>Deploy</h4>
-                  <div
-                    style={{
-                      marginTop: "0.25rem",
-                      display: "flex",
-                      gap: "0.5rem",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <span>Target:</span>
-                    <input
-                      type="text"
-                      value={deployTarget}
-                      onChange={(e) => setDeployTarget(e.target.value)}
-                      placeholder="e.g. local-ui, dev, hpc"
-                      style={{
-                        padding: "0.15rem 0.4rem",
-                        fontSize: "0.8rem",
-                        minWidth: "10rem",
-                      }}
-                    />
-                    {Array.from(new Set(deployments.map((d) => d.target))).length >
-                      0 && (
-                      <>
-                        <span>or pick existing:</span>
-                        <select
-                          value={deployTarget}
-                          onChange={(e) => setDeployTarget(e.target.value)}
-                          style={{
-                            padding: "0.15rem 0.4rem",
-                            fontSize: "0.8rem",
-                          }}
-                        >
-                          <option value="">(select target)</option>
-                          {Array.from(
-                            new Set(deployments.map((d) => d.target))
-                          ).map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleDeployOnly}
-                      disabled={deploying || !deployTarget.trim()}
-                      style={{
-                        padding: "0.2rem 0.6rem",
-                        borderRadius: "0.4rem",
-                        border: "1px solid #888",
-                        background: deploying ? "#eee" : "#fff",
-                        cursor:
-                          deploying || !deployTarget.trim()
-                            ? "default"
-                            : "pointer",
-                        fontSize: "0.8rem",
-                      }}
-                    >
-                      {deploying ? "Deploying…" : "Deploy (stage code)"}
-                    </button>
-                    <span style={{ fontSize: "0.8rem", color: "#555" }}>
-                      {hasReadyDeploymentForTarget
-                        ? `Deployed to "${deployTarget}".`
-                        : deployTarget.trim()
-                        ? `Not yet deployed to "${deployTarget}".`
-                        : "Specify a target to deploy."}
-                    </span>
-                  </div>
-                  {deploymentsError && (
-                    <div style={{ color: "red", marginTop: "0.25rem" }}>
-                      {deploymentsError}
-                    </div>
-                  )}
-                </div>
-
-                {/* RUN section */}
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <h4 style={{ margin: "0 0 0.25rem 0" }}>Run</h4>
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    <div
-                      style={{
-                        fontSize: "0.8rem",
-                        color: "#555",
-                        marginBottom: "0.25rem",
-                      }}
-                    >
-                      <strong>Run inputs (JSON):</strong>{" "}
-                      <span>
-                        e.g. <code>{'{ "name": "Ian" }'}</code> or{" "}
-                        <code>{'{ "values": [1,2,3] }'}</code>
-                      </span>
-                    </div>
-                    <textarea
-                      value={inputsJson}
-                      onChange={(e) => {
-                        setInputsJson(e.target.value);
-                        setInputsError(null);
-                      }}
-                      rows={6}
-                      style={{
-                        width: "100%",
-                        fontFamily: "monospace",
-                        fontSize: "0.8rem",
-                        padding: "0.4rem",
-                        borderRadius: "0.25rem",
-                        border: "1px solid #ccc",
-                        resize: "vertical",
-                      }}
-                    />
-                    {inputsError && (
-                      <div
-                        style={{
-                          color: "red",
-                          fontSize: "0.8rem",
-                          marginTop: "0.25rem",
-                        }}
-                      >
-                        {inputsError}
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                    <button
-                      type="button"
-                      onClick={handleRunSelected}
-                      disabled={deploying || !hasReadyDeploymentForTarget}
-                      style={{
-                        padding: "0.2rem 0.6rem",
-                        borderRadius: "0.4rem",
-                        border: "1px solid #444",
-                        background:
-                          deploying || !hasReadyDeploymentForTarget
-                            ? "#eee"
-                            : "#fff",
-                        cursor:
-                          deploying || !hasReadyDeploymentForTarget
-                            ? "default"
-                            : "pointer",
-                        fontSize: "0.8rem",
-                      }}
-                    >
-                      {deploying ? "Running…" : "Run agent"}
-                    </button>
-                    {selectedAgent &&
-                      (selectedAgent.name === "materials-screening-agent" ||
-                        selectedAgent.name === "stats-demo-agent" ||
-                        selectedAgent.name === "simple-demo-agent") && (
-                        <button
-                          type="button"
-                          onClick={handleLoadExampleInputs}
-                          style={{
-                            padding: "0.2rem 0.6rem",
-                            borderRadius: "0.4rem",
-                            border: "1px solid #888",
-                            background: "#fff",
-                            cursor: "pointer",
-                            fontSize: "0.8rem",
-                          }}
-                        >
-                          Load example inputs
-                        </button>
-                      )}
-                    {!hasReadyDeploymentForTarget && deployTarget.trim() && (
-                      <span style={{ fontSize: "0.8rem", color: "#a00" }}>
-                        Deploy this agent to "{deployTarget}" before running.
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Deployment history */}
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <strong>Deployments:</strong>
-                  {deploymentsLoading ? (
-                    <p>Loading deployments…</p>
-                  ) : deployments.length === 0 ? (
-                    <p style={{ margin: "0.25rem 0" }}>No deployments recorded.</p>
-                  ) : (
-                    <table
-                      style={{
-                        width: "100%",
-                        borderCollapse: "collapse",
-                        fontSize: "0.8rem",
-                        marginTop: "0.25rem",
-                      }}
-                    >
-                      <thead>
-                        <tr>
-                          <th
-                            style={{
-                              borderBottom: "1px solid #ccc",
-                              textAlign: "left",
-                            }}
-                          >
-                            Target
-                          </th>
-                          <th
-                            style={{
-                              borderBottom: "1px solid #ccc",
-                              textAlign: "left",
-                            }}
-                          >
-                            Status
-                          </th>
-                          <th
-                            style={{
-                              borderBottom: "1px solid #ccc",
-                              textAlign: "left",
-                            }}
-                          >
-                            Time
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {deployments.map((d) => (
-                          <tr key={d.id}>
-                            <td
-                              style={{
-                                borderBottom: "1px solid #eee",
-                                padding: "0.2rem 0.2rem",
-                              }}
-                            >
-                              {d.target}
-                            </td>
-                            <td
-                              style={{
-                                borderBottom: "1px solid #eee",
-                                padding: "0.2rem 0.2rem",
-                              }}
-                            >
-                              {d.status}
-                            </td>
-                            <td
-                              style={{
-                                borderBottom: "1px solid #eee",
-                                padding: "0.2rem 0.2rem",
-                              }}
-                            >
-                              {new Date(d.created_at).toLocaleString()}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-
-                {/* Last run outputs */}
-                <div style={{ marginBottom: "0.75rem" }}>
-                  <strong>Last run outputs:</strong>
-                  {lastRunOutputs ? (
-                    <pre
-                      style={{
-                        background: "#f7f7f7",
-                        padding: "0.5rem",
-                        borderRadius: "0.25rem",
-                        fontSize: "0.8rem",
-                        marginTop: "0.25rem",
-                        maxHeight: "12rem",
-                        overflow: "auto",
-                      }}
-                    >
-                      {JSON.stringify(lastRunOutputs, null, 2)}
-                    </pre>
-                  ) : (
-                    <p style={{ margin: "0.25rem 0" }}>
-                      No runs recorded in this session.
-                    </p>
-                  )}
-                </div>
-
-                {/* Tags */}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <strong>Tags:</strong>{" "}
-                  {selectedAgent.tags && selectedAgent.tags.length > 0
-                    ? selectedAgent.tags.join(", ")
-                    : "—"}
-                </div>
-
-                {/* GitHub / container metadata */}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <strong>Git repo:</strong>{" "}
-                  {selectedAgent.git_repo ? (
-                    <a
-                      href={selectedAgent.git_repo}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {selectedAgent.git_repo}
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                  <br />
-                  <strong>Commit:</strong> {selectedAgent.git_commit ?? "—"}
-                  <br />
-                  <strong>Container image:</strong>{" "}
-                  {selectedAgent.container_image ?? "—"}
-                  <br />
-                  <strong>Entrypoint:</strong>{" "}
-                  {selectedAgent.entrypoint ?? "—"}
-                </div>
-
-                {/* A2A Agent Card summary */}
-                <div style={{ marginBottom: "0.5rem" }}>
-                  <strong>A2A Agent Card:</strong>{" "}
-                  {selectedAgent.a2a_card ? (
-                    <>
-                      <div>
-                        <strong>Name:</strong> {selectedAgent.a2a_card.name}
-                      </div>
-                      <div>
-                        <strong>URL:</strong>{" "}
-                        <a
-                          href={selectedAgent.a2a_card.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {selectedAgent.a2a_card.url}
-                        </a>
-                      </div>
-                      <div>
-                        <strong>Version:</strong>{" "}
-                        {selectedAgent.a2a_card.version}
-                      </div>
-                      <div>
-                        <strong>Default I/O:</strong>{" "}
-                        {selectedAgent.a2a_card.defaultInputModes.join(", ") ||
-                          "—"}{" "}
-                        →{" "}
-                        {selectedAgent.a2a_card.defaultOutputModes.join(", ") ||
-                          "—"}
-                      </div>
-                      {selectedAgent.a2a_card.description && (
-                        <div style={{ marginTop: "0.25rem" }}>
-                          <em>{selectedAgent.a2a_card.description}</em>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </div>
-
-                {/* Raw JSON */}
-                <details>
-                  <summary style={{ cursor: "pointer" }}>Raw JSON</summary>
-                  <pre
-                    style={{
-                      background: "#f7f7f7",
-                      padding: "0.5rem",
-                      borderRadius: "0.25rem",
-                      fontSize: "0.8rem",
-                      marginTop: "0.25rem",
-                    }}
-                  >
-                    {JSON.stringify(selectedAgent, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
+      {/* Tab content */}
+      {activeTab === "agents"
+        ? renderAgentsTab()
+        : activeTab === "locations"
+        ? renderLocationsTab()
+        : activeTab === "deployments"
+        ? renderDeploymentsTab()
+        : renderInstancesTab()}
     </div>
   );
 };

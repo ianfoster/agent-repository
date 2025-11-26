@@ -1,174 +1,153 @@
+# backend/app/main.py
 from __future__ import annotations
+
+from .academy_runtime import start_academy_instance
+from .schemas import StartInstanceRequest, InstanceResponse
+from .models import AgentImplementation
 
 import os
 from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
-import os
-from pathlib import Path
-from .runner import stage_agent_code, run_agent_locally_from_staged
-
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from .database import engine, get_db
+from .models import Base, AgentImplementation, Location as LocationModel
+from . import crud
 from .schemas import (
-    AgentSpec,
-    AgentCreate,
+    AgentCard,
+    AgentCardCreate,
+    Location,
+    LocationCreate,
     Deployment,
     DeploymentCreate,
     RunRequest,
     RunResult,
 )
-from .runner import stage_agent_code, run_agent_locally_from_staged
-from .database import Base, engine, get_db
-from . import crud
+from .runtime import stage_agent_code, run_agent_locally_from_staged
 
 app = FastAPI(
-    title="Academy Agent Repository Backend",
+    title="Academy Agent Repository",
     version="0.1.0",
-    description="Core API for the Academy Agent Repository.",
+    description="Registry and control plane for Academy-based agents.",
 )
 
-# For dev simplicity: create tables on startup if they do not exist.
 Base.metadata.create_all(bind=engine)
 
 
 @app.get("/health")
 def health():
-    """
-    Simple health check endpoint used by SDK, frontend, and CI tests.
-    """
     return {"status": "ok", "service": "backend"}
 
 
-@app.post("/agents", response_model=AgentSpec, status_code=201)
-def create_agent(payload: AgentCreate, db: Session = Depends(get_db)) -> AgentSpec:
-    """
-    Register a new agent in the persistent repository.
-    """
-    return crud.create_agent(db, payload)
+# -------- Agents --------
+
+@app.post("/agents", response_model=AgentCard, status_code=201)
+def register_agent(card_in: AgentCardCreate, db: Session = Depends(get_db)) -> AgentCard:
+    # For now: always create; you could implement upsert by (name, version)
+    return crud.create_agent(db, card_in)
 
 
-@app.get("/agents", response_model=List[AgentSpec])
-def list_agents(
-    name: Optional[str] = Query(default=None, description="Filter by exact agent name"),
-    agent_type: Optional[str] = Query(default=None, description="Filter by agent type"),
-    tag: Optional[str] = Query(default=None, description="Filter by tag"),
-    owner: Optional[str] = Query(default=None, description="Filter by owner"),
-    db: Session = Depends(get_db),
-) -> List[AgentSpec]:
-    """
-    List agents in the repository, with simple filtering support.
-    """
-    return crud.list_agents(
-        db=db,
-        name=name,
-        agent_type=agent_type,
-        tag=tag,
-        owner=owner,
-    )
+@app.get("/agents", response_model=List[AgentCard])
+def list_agents(db: Session = Depends(get_db)) -> List[AgentCard]:
+    return crud.list_agents(db)
 
 
-@app.get("/agents/{agent_id}", response_model=AgentSpec)
-def get_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentSpec:
-    """
-    Retrieve a single agent by its UUID.
-    """
-    agent = crud.get_agent(db, str(agent_id))
-    if agent is None:
+@app.get("/agents/{agent_id}", response_model=AgentCard)
+def get_agent(agent_id: UUID, db: Session = Depends(get_db)) -> AgentCard:
+    card = crud.get_agent(db, str(agent_id))
+    if card is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return agent
+    return card
 
 
-
-@app.post("/agents/{agent_id}/validate", response_model=AgentSpec)
+@app.post("/agents/{agent_id}/validate", response_model=AgentCard)
 def validate_agent(
     agent_id: UUID,
-    score: Optional[float] = Query(default=None, description="Optional validation score"),
+    score: Optional[float] = Query(default=None),
     db: Session = Depends(get_db),
-) -> AgentSpec:
-    """
-    Simple validation:
-
-    1. Stage the agent's code to a special 'local-validate' target.
-    2. If `validation_inputs` are provided in the spec, run the agent once
-       with those inputs as a smoke test.
-    3. If staging + run succeed, mark the agent as validated.
-    """
-    # 1. Load agent spec from DB
-    agent = crud.get_agent(db, str(agent_id))
+) -> AgentCard:
+    agent = db.get(AgentImplementation, str(agent_id))
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    # 2. Stage code
+    # Stage (and optionally run) as simple validation
     root = os.getenv("AGENTS_WORKDIR")
     workdir = Path(root) if root else Path.home() / ".academy" / "agents"
-    target = "local-validate"
+
+    # for validation, treat location logically as "local-validate"
+    # (or look up a corresponding LocationModel if you want)
+    dummy_loc = LocationModel(id="local-validate", name="local-validate", location_type="local", config={})
 
     try:
-        staged_path = stage_agent_code(agent, workdir, target=target)
+        staged_path = stage_agent_code(agent, dummy_loc, workdir)
     except Exception as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Validation failed during staging: {e}",
+            status_code=500, detail=f"Validation failed during staging: {e}"
         ) from e
 
-    # 3. Optional smoke-run if validation_inputs are present
+    # Optional smoke run
     if agent.validation_inputs:
-        req = RunRequest(inputs=agent.validation_inputs, target=target)
+        req = RunRequest(inputs=agent.validation_inputs, target="local-validate")
         try:
-            # We don't care about outputs here, just that it runs without error
             _ = run_agent_locally_from_staged(agent, req, staged_path)
         except Exception as e:
             raise HTTPException(
-                status_code=500,
-                detail=f"Validation failed during test run: {e}",
+                status_code=500, detail=f"Validation failed during test run: {e}"
             ) from e
 
-    # 4. Mark as validated in DB
-    validated = crud.validate_agent(db, str(agent_id), score=score)
-    if validated is None:
+    card = crud.mark_agent_validated(db, str(agent_id), score=score)
+    if card is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return validated
+    return card
 
 
-# ----------------------------------------------------------------------
-# Deployment: stage code from GitHub into a local path
-# ----------------------------------------------------------------------
+# -------- Locations --------
+
+@app.post("/locations", response_model=Location, status_code=201)
+def register_location(loc_in: LocationCreate, db: Session = Depends(get_db)) -> Location:
+    return crud.create_location(db, loc_in)
 
 
-@app.post("/agents/{agent_id}/deploy", response_model=Deployment, status_code=201)
+@app.get("/locations", response_model=List[Location])
+def list_locations(db: Session = Depends(get_db)) -> List[Location]:
+    return crud.list_locations(db)
+
+
+# -------- Deployments --------
+
+@app.post("/deployments", response_model=Deployment, status_code=201)
 def deploy_agent(
-    agent_id: UUID,
-    payload: DeploymentCreate,
+    dep_in: DeploymentCreate,
     db: Session = Depends(get_db),
 ) -> Deployment:
-    """
-    Deploy (stage) an agent's code to a logical target.
-
-    For local targets, this clones/updates the agent's git_repo into a
-    deterministic directory under AGENTS_WORKDIR (or ~/.academy/agents),
-    and records that path in the Deployment record with status='ready'.
-    """
-    agent = crud.get_agent(db, str(agent_id))
-    if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent = db.get(AgentImplementation, str(dep_in.agent_id))
+    loc = db.get(LocationModel, str(dep_in.location_id))
+    if agent is None or loc is None:
+        raise HTTPException(status_code=404, detail="Agent or Location not found")
 
     root = os.getenv("AGENTS_WORKDIR")
     workdir = Path(root) if root else Path.home() / ".academy" / "agents"
 
     try:
-        staged_path = stage_agent_code(agent, workdir, payload.target)
+        staged_path = stage_agent_code(agent, loc, workdir)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Deployment failed: {e}") from e
+        # record failure
+        dep = crud.create_deployment(
+            db, dep_in, local_path=None, status="failed", metadata={"error": str(e)}
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Deployment failed during staging: {e}"
+        ) from e
 
     dep = crud.create_deployment(
         db,
-        str(agent_id),
-        payload,
+        dep_in,
         local_path=str(staged_path),
         status="ready",
+        metadata={"note": "staged successfully"},
     )
     if dep is None:
         raise HTTPException(status_code=500, detail="Failed to record deployment")
@@ -176,51 +155,92 @@ def deploy_agent(
 
 
 @app.get("/agents/{agent_id}/deployments", response_model=List[Deployment])
-def list_deployments(
-    agent_id: UUID,
-    db: Session = Depends(get_db),
+def list_deployments_for_agent(
+    agent_id: UUID, db: Session = Depends(get_db)
 ) -> List[Deployment]:
-    """
-    List recent deployments for an agent.
-    """
     return crud.list_deployments_for_agent(db, str(agent_id))
 
 
-# ----------------------------------------------------------------------
-# Run: execute previously staged code for a given target
-# ----------------------------------------------------------------------
-
+# -------- Run (one-off) --------
 
 @app.post("/agents/{agent_id}/run", response_model=RunResult)
 def run_agent(
     agent_id: UUID,
-    payload: RunRequest,
+    req: RunRequest,
     db: Session = Depends(get_db),
 ) -> RunResult:
-    """
-    Execute an agent implementation using an existing deployment.
-
-    This endpoint:
-      1. looks up a 'ready' Deployment for (agent_id, payload.target),
-      2. runs the agent's entrypoint using the staged code at that deployment's path,
-      3. returns the outputs together with the deployment metadata.
-
-    If no suitable deployment exists, a 409 is returned with guidance to deploy first.
-    """
-    agent = crud.get_agent(db, str(agent_id))
+    agent = db.get(AgentImplementation, str(agent_id))
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    dep = crud.get_latest_ready_deployment(db, str(agent_id), payload.target)
+    # Find appropriate location
+    if req.target:
+        loc = crud.find_location_by_name(db, req.target) or None
+        if loc is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Location {req.target!r} not found",
+            )
+    else:
+        raise HTTPException(status_code=400, detail="target is required")
+
+    dep = crud.get_latest_ready_deployment(db, str(agent_id), loc.id)
     if dep is None or not dep.local_path:
         raise HTTPException(
             status_code=409,
-            detail=f"No ready deployment for target {payload.target!r}. Deploy this agent first.",
+            detail=f"No ready deployment for agent {agent_id} on location {loc.name!r}",
         )
 
-    try:
-        outputs = run_agent_locally_from_staged(agent, payload, Path(dep.local_path))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent run failed: {e}") from e
+    outputs = run_agent_locally_from_staged(
+        agent, req, Path(dep.local_path)
+    )
 
     return RunResult(outputs=outputs, deployment=dep)
+
+@app.post("/instances", response_model=InstanceResponse)
+async def start_instance(
+    req: StartInstanceRequest,
+    db: Session = Depends(get_db),
+):
+    agent = db.get(AgentImplementation, str(req.agent_id))
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+
+    loc = crud.find_location_by_name(db, req.location_name)
+    if loc is None:
+        raise HTTPException(404, "Location not found")
+
+    # Optionally require a ready deployment here; for now, ignore.
+    outputs, handle = await start_academy_instance(agent, loc, req.init_inputs or {})
+
+    # You decide how to serialize handle (could be repr(handle), handle.agent_id, etc.)
+    inst = crud.create_instance(db, deployment_id="some-dep-id", handle=str(handle), endpoint=None)
+    return inst
+
+
+@app.post("/agents/{agent_id}/instances", response_model=InstanceResponse)
+async def start_agent_instance(
+    agent_id: UUID,
+    req: StartInstanceRequest,
+    db: Session = Depends(get_db),
+) -> InstanceResponse:
+    """
+    Start a running Academy-based agent instance from a registered implementation.
+
+    For now, this uses a single local Manager (thread-based) and stores handles
+    in memory only (no DB persistence).
+    """
+    agent_impl = db.get(AgentImplementation, str(agent_id))
+    if agent_impl is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        instance_id = await start_academy_instance(agent_impl)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start instance: {e}") from e
+
+    return InstanceResponse(
+        instance_id=instance_id,
+        agent_id=str(agent_id),
+        status="running",
+    )

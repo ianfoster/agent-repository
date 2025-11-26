@@ -1,21 +1,20 @@
-# examples/agents_demo/agents_demo/simple_agent.py
+# agents_demo/simple_academy_agent.py
 
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Dict
+
+from academy.agent import Agent, action  # from Academy
 
 
-class SimpleDemoAgent:
+class SimpleDemoAgent(Agent):
     """
-    Example agent implementation for local runs.
+    Simple Academy-based demo agent.
 
-    Contract:
-      - constructed with no arguments
-      - exposes run(**inputs) -> dict
+    Exposes a single action `greet` that returns a greeting JSON blob.
     """
 
-    def run(self, **inputs: Any) -> Dict[str, Any]:
-        # Just echo inputs and add a message.
+    @action
+    async def greet(self, name: str = "world") -> Dict[str, str]:
         return {
-            "received_inputs": inputs,
-            "message": "Hello from SimpleDemoAgent running on your laptop!",
+            "greeting": f"Hello, {name}! (from {self.__class__.__name__})"
         }

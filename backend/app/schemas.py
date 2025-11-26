@@ -1,153 +1,152 @@
+# backend/app/schemas.py
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
 
 
-class IOField(BaseModel):
-    """
-    Description of a single input or output field for an agent.
-    """
-    description: str
-    type: str = "string"          # e.g., "string", "float", "json", "file"
-    required: bool = True
-    default: Optional[Any] = None
+# ---------- Agent Cards ----------
 
-
-# ----------------------------
-# A2A Agent Card models
-# ----------------------------
-
-class A2ASkill(BaseModel):
-    """
-    A2A skill description, simplified from the A2A Agent Card spec.
-    """
-    id: str
-    name: str
-    description: Optional[str] = None
-    tags: List[str] = []
-    inputModes: List[str] = []
-    outputModes: List[str] = []
-    examples: List[Any] = []
-
-
-class A2AAgentCard(BaseModel):
-    """
-    A2A Agent Card metadata, aligned with the A2A specification.
-    """
-    name: str
-    url: str
-    description: Optional[str] = None
-    version: str
-    protocolVersion: Optional[str] = None
-
-    capabilities: Dict[str, Any] = Field(default_factory=dict)
-    skills: List[A2ASkill] = Field(default_factory=list)
-
-    defaultInputModes: List[str] = Field(default_factory=list)
-    defaultOutputModes: List[str] = Field(default_factory=list)
-    supportsAuthenticatedExtendedCard: bool = False
-
-    securitySchemes: Optional[Dict[str, Any]] = None
-    security: Optional[List[Dict[str, Any]]] = None
-
-
-# ----------------------------
-# Core Agent models
-# ----------------------------
-
-class AgentBase(BaseModel):
-    """
-    Shared fields for created and stored agents.
-    """
+class AgentCardBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str
     version: str
     description: str
 
-    agent_type: str               # "task", "domain", "planner", "tool-wrapper", etc.
+    agent_type: str
     tags: List[str] = []
 
-    inputs: Dict[str, IOField]
-    outputs: Dict[str, IOField]
+    inputs_schema: Dict[str, Any] = Field(default_factory=dict)
+    outputs_schema: Dict[str, Any] = Field(default_factory=dict)
 
-    owner: Optional[str] = None   # user or team id
-
-    # Optional A2A Agent Card metadata
-    a2a_card: Optional[A2AAgentCard] = None
-
-    # GitHub / container metadata
     git_repo: Optional[str] = None
     git_commit: Optional[str] = None
     container_image: Optional[str] = None
     entrypoint: Optional[str] = None
 
-    # Validation / evaluation metadata
     validation_inputs: Optional[Dict[str, Any]] = None
-    validation_status: str = "unvalidated"  # "unvalidated", "validated", "failed", etc.
-    last_validated_at: Optional[datetime] = None
+
+    validation_status: str = "unvalidated"
     validation_score: Optional[float] = None
+    last_validated_at: Optional[datetime] = None
 
 
-class AgentCreate(AgentBase):
-    """
-    Payload for creating a new agent.
-    """
+class AgentCardCreate(AgentCardBase):
     pass
 
 
-class AgentSpec(AgentBase):
-    """
-    Full representation of an agent as stored in the repository.
-    """
-    id: UUID = Field(default_factory=uuid4)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+class AgentCard(AgentCardBase):
+    id: UUID
+    created_at: datetime
+    updated_at: datetime
 
 
-# ----------------------------
-# Deployment models
-# ----------------------------
+# ---------- Locations ----------
 
-class DeploymentCreate(BaseModel):
-    """
-    Request body when asking to deploy an agent.
-    For the stub, we just capture a logical target.
-    """
-    target: str = Field(..., description="Logical deployment target, e.g., 'dev', 'hpc', 'lab-node-1'")
-
-
-class Deployment(BaseModel):
-    """
-    Representation of a deployment record returned by the API.
-    """
+class LocationBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    name: str
+    location_type: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class LocationCreate(LocationBase):
+    pass
+
+
+class Location(LocationBase):
     id: UUID
-    agent_id: UUID
-    target: str
-    status: str
-    local_path: Optional[str] = None
     created_at: datetime
+
+
+# ---------- Deployments ----------
+
+class DeploymentBase(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    agent_id: UUID
+    location_id: UUID
+
+
+class DeploymentCreate(DeploymentBase):
+    pass
+
+
+class Deployment(DeploymentBase):
+    id: UUID
+    status: str
+    last_error: Optional[str]
+    local_path: Optional[str]
+    meta: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------- Instances ----------
+
+class InstanceBase(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    deployment_id: UUID
+
+
+class Instance(InstanceBase):
+    id: UUID
+    status: str
+    handle: Optional[str]
+    endpoint: Optional[str]
+    created_at: datetime
+    last_heartbeat_at: Optional[datetime]
+    stopped_at: Optional[datetime]
+
+
+# ---------- Runtime operations ----------
 
 class RunRequest(BaseModel):
     """
-    Request body for running an agent locally via the backend.
-    For now, inputs are optional and default to an empty dict.
+    Request to run an agent (either via instance or one-off).
     """
     inputs: Dict[str, Any] = Field(default_factory=dict)
-    target: str = Field(
-        default="local-ui",
-        description="Logical deployment target, used when recording a deployment",
-    )
+    target: Optional[str] = None  # location name or ID
 
 
 class RunResult(BaseModel):
-    """
-    Response from /agents/{id}/run.
-    """
     outputs: Dict[str, Any]
     deployment: Optional[Deployment] = None
+    instance: Optional[Instance] = None
+
+
+class AgentCallRequest(BaseModel):
+    """
+    Call a running instance's action.
+    """
+    action: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentCallResponse(BaseModel):
+    result: Any
+
+
+class StartInstanceRequest(BaseModel):
+    """
+    Request body for starting an Academy-based agent instance.
+    """
+    # In future, you might accept location name, init params, etc.
+    location_name: Optional[str] = None
+    init_inputs: Dict[str, Any] = Field(default_factory=dict)
+
+
+class InstanceResponse(BaseModel):
+    """
+    Minimal description of a running instance.
+    """
+    instance_id: str
+    agent_id: str
+    status: str
