@@ -7,37 +7,43 @@ import importlib
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+from pathlib import Path
 
-from academy.exchange.thread import ThreadExchange
-from academy.launcher.thread import ThreadLauncher
+from concurrent.futures import ThreadPoolExecutor
+
+from academy.exchange import LocalExchangeFactory
 from academy.manager import Manager
-
 from .models import AgentImplementation
 
 
 @dataclass
 class RuntimeEnv:
-    manager: Manager
-    handles: Dict[str, Any] = field(default_factory=dict)
-
+  ctx: Any  # the context manager returned by from_exchange_factory
+  manager: Manager
+  handles: Dict[str, Any] = field(default_factory=dict)
 
 _env: Optional[RuntimeEnv] = None
 
-
 async def get_or_create_manager() -> RuntimeEnv:
-    """
-    Lazily create a single Manager for this process and reuse it.
+  """
+  Lazily create a single Manager using LocalExchangeFactory and reuse it.
 
-    In this setup, we treat Manager as a regular object; we do not use
-    it as a context manager because this version has no __aenter__/__aexit__.
-    """
-    global _env
-    if _env is not None:
-        return _env
-
-    manager = Manager(exchange=ThreadExchange(), launcher=ThreadLauncher())
-    _env = RuntimeEnv(manager=manager)
+  We use Manager.from_exchange_factory(...) as per Academy docs.
+  """
+  global _env
+  if _env is not None:
     return _env
+
+  # Create an async context manager that will yield a Manager
+  ctx = await Manager.from_exchange_factory(
+    factory=LocalExchangeFactory(),
+    executors=ThreadPoolExecutor(),
+  )
+  # Enter the context to get the Manager instance
+  manager = await ctx.__aenter__()
+
+  _env = RuntimeEnv(ctx=ctx, manager=manager)
+  return _env
 
 
 async def start_academy_instance(agent_impl: AgentImplementation) -> str:
