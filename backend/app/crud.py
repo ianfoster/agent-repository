@@ -5,10 +5,12 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
+from typing import Optional
 from sqlalchemy.orm import Session
 
 from . import models
-from .schemas import AgentCardCreate, AgentCard, LocationCreate, Location, DeploymentCreate, Deployment, Instance
+from .schemas import AgentCardCreate, AgentCard, LocationCreate, Location, DeploymentCreate, Instance
+
 
 
 # ---------- Agent implementations ----------
@@ -36,6 +38,25 @@ def create_agent(db: Session, card_in: AgentCardCreate) -> AgentCard:
     db.commit()
     db.refresh(db_obj)
     return AgentCard.model_validate(db_obj)
+
+
+def delete_agent(db: Session, agent_id: str) -> bool:
+    """
+    Delete an agent implementation by its ID.
+
+    Returns True if a row was deleted, False if not found.
+    """
+    obj = db.get(models.AgentImplementation, agent_id)
+    if obj is None:
+        return False
+
+    # If you want to also delete deployments, you can either:
+    # - rely on cascade delete in your ORM relationship, or
+    # - manually delete deployments here before deleting the agent.
+    # For now, just delete the agent row.
+    db.delete(obj)
+    db.commit()
+    return True
 
 
 def list_agents(db: Session) -> List[AgentCard]:
@@ -95,6 +116,22 @@ def create_location(db: Session, loc_in: LocationCreate) -> Location:
     return Location.model_validate(db_obj)
 
 
+def delete_location(db: Session, location_id: str) -> bool:
+    """
+    Delete a location by its ID.
+
+    Returns True if a row was deleted, False if not found.
+    """
+    obj = db.get(models.Location, location_id)
+    if obj is None:
+        return False
+
+    # NOTE: if you want to enforce "no deployments must exist for this location"
+    # you could check for that here before deleting.
+    db.delete(obj)
+    db.commit()
+    return True
+
 def list_locations(db: Session) -> List[Location]:
     objs = db.query(models.Location).all()
     return [Location.model_validate(o) for o in objs]
@@ -116,13 +153,19 @@ def find_location_by_name(db: Session, name: str) -> Optional[Location]:
 
 # ---------- Deployments ----------
 
+from typing import Optional
+from uuid import uuid4
+from sqlalchemy.orm import Session
+
+from . import models
+
 def create_deployment(
     db: Session,
-    dep_in: DeploymentCreate,
+    dep_in,
     local_path: Optional[str] = None,
     status: str = "requested",
     metadata: Optional[dict] = None,
-) -> Optional[Deployment]:
+) -> Optional[models.Deployment]:
     """
     Create or update a deployment record for an agent on a location.
 
@@ -151,19 +194,17 @@ def create_deployment(
     )
 
     if existing:
-        # Update in-place
         if local_path is not None:
             existing.local_path = local_path
         existing.status = status
         if metadata:
-            # assuming you used "meta" on the ORM model
             if existing.meta is None:
                 existing.meta = metadata
             else:
                 existing.meta.update(metadata)
         db.commit()
         db.refresh(existing)
-        return Deployment.model_validate(existing)
+        return existing
 
     # No existing deployment → create new
     db_dep = models.Deployment(
@@ -177,7 +218,7 @@ def create_deployment(
     db.add(db_dep)
     db.commit()
     db.refresh(db_dep)
-    return Deployment.model_validate(db_dep)
+    return db_dep
 
 def list_deployments_for_agent(
     db: Session, agent_id: str
@@ -188,12 +229,66 @@ def list_deployments_for_agent(
         .order_by(models.Deployment.created_at.desc())
         .all()
     )
-    return [Deployment.model_validate(o) for o in objs]
+    return objs
+
+
+def delete_deployment(db: Session, deployment_id: str) -> bool:
+    """
+    Delete a deployment row by its ID.
+
+    Returns True if a row was deleted, False if not found.
+    """
+    obj = db.get(models.Deployment, deployment_id)
+    if obj is None:
+        return False
+
+    db.delete(obj)
+    db.commit()
+    return True
 
 
 def get_latest_ready_deployment(
     db: Session, agent_id: str, location_id: str
+) -> Optional[models.Deployment]:
+    """
+    Return the most recent 'ready' Deployment for a given agent and location.
+
+    Implementation note:
+    We deliberately load all deployments and filter in Python to avoid any
+    confusion with ORM mappings / status values. This is fine for a small
+    prototype and easy to reason about.
+    """
+    print("DEBUG get_latest_ready_deployment:", agent_id, location_id)
+
+    rows = db.query(models.Deployment).all()
+    print("DEBUG get_latest_ready_deployment: all rows:")
+    for r in rows:
+        print("  ROW:", r.id, r.agent_id, r.location_id, repr(r.status))
+        print("  TYPES:", type(r.id), type(r.agent_id), type(r.location_id), type(location_id), type(r.status))
+
+    candidates = [
+        r
+        for r in rows
+        if r.agent_id == agent_id
+        and r.location_id == str(location_id)
+        and r.status == "ready"
+    ]
+
+    # Sort newest first by created_at
+    candidates.sort(key=lambda r: r.created_at, reverse=True)
+
+    if not candidates:
+        print("DEBUG get_latest_ready_deployment: no candidates found")
+        return None
+
+    chosen = candidates[0]
+    print("DEBUG get_latest_ready_deployment: chosen:", chosen.id, chosen.local_path)
+    return chosen
+
+def get_latest_ready_deployment_old(
+    db: Session, agent_id: str, location_id: str
 ) -> Optional[Deployment]:
+    print("DEBUG get_latest_ready_deployment:", agent_id, location_id)
     q = (
         db.query(models.Deployment)
         .filter(
@@ -204,7 +299,10 @@ def get_latest_ready_deployment(
         .order_by(models.Deployment.created_at.desc())
     )
     obj = q.first()
-    return Deployment.model_validate(obj) if obj else None
+    print("DEBUG get_latest_ready_deployment -> obj:", obj)
+    #return Deployment.model_validate(obj) if obj else None
+    #MOD
+    return obj
 
 
 # ---------- Instances (running agents) ----------

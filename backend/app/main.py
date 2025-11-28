@@ -1,8 +1,8 @@
 # backend/app/main.py
 from __future__ import annotations
 
-from .academy_runtime import start_academy_instance
-from .schemas import StartInstanceRequest, InstanceResponse
+from .academy_runtime import start_academy_instance, call_instance_action, stop_instance
+from .schemas import StartInstanceRequest, InstanceResponse, Deployment as DeploymentSchema
 from .models import AgentImplementation
 
 import os
@@ -25,7 +25,12 @@ from .schemas import (
     DeploymentCreate,
     RunRequest,
     RunResult,
+    StartInstanceRequest,
+    InstanceResponse,
+    CallInstanceRequest,
+    CallInstanceResponse,
 )
+
 from .runtime import stage_agent_code, run_agent_locally_from_staged
 
 app = FastAPI(
@@ -104,6 +109,21 @@ def validate_agent(
     return card
 
 
+@app.delete("/agents/{agent_id}", status_code=204)
+def unregister_agent(
+    agent_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Unregister (delete) an agent implementation by ID.
+    """
+    ok = crud.delete_agent(db, agent_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    # 204 No Content on success
+    return
+
+
 # -------- Locations --------
 
 @app.post("/locations", response_model=Location, status_code=201)
@@ -116,8 +136,60 @@ def list_locations(db: Session = Depends(get_db)) -> List[Location]:
     return crud.list_locations(db)
 
 
+@app.delete("/locations/{location_id}", status_code=204)
+def unregister_location(
+    location_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Unregister (delete) a location by ID.
+    """
+    ok = crud.delete_location(db, location_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Location not found")
+    # 204 No Content
+    return
+
+
 # -------- Deployments --------
 
+@app.post("/deployments", response_model=DeploymentSchema, status_code=201)
+def deploy_agent(
+    dep_in: DeploymentCreate,
+    db: Session = Depends(get_db),
+):
+    agent = db.get(AgentImplementation, dep_in.agent_id)
+    loc = db.get(LocationModel, dep_in.location_id)
+    if agent is None or loc is None:
+        raise HTTPException(status_code=404, detail="Agent or Location not found")
+
+    root = os.getenv("AGENTS_WORKDIR")
+    workdir = Path(root) if root else Path.home() / ".academy" / "agents"
+
+    try:
+        staged_path = stage_agent_code(agent, loc, workdir)
+    except Exception as e:
+        db_dep = crud.create_deployment(
+            db, dep_in, local_path=None, status="failed", metadata={"error": str(e)}
+        )
+        raise HTTPException(
+            status_code=500, detail=f"Deployment failed during staging: {e}"
+        ) from e
+
+    db_dep = crud.create_deployment(
+        db,
+        dep_in,
+        local_path=str(staged_path),
+        status="ready",
+        metadata={"note": "staged successfully"},
+    )
+    if db_dep is None:
+        raise HTTPException(status_code=500, detail="Failed to record deployment")
+
+    # Convert ORM → Pydantic for response
+    return DeploymentSchema.model_validate(db_dep)
+
+"""
 @app.post("/deployments", response_model=Deployment, status_code=201)
 def deploy_agent(
     dep_in: DeploymentCreate,
@@ -142,6 +214,7 @@ def deploy_agent(
             status_code=500, detail=f"Deployment failed during staging: {e}"
         ) from e
 
+    print(f'Creating deployment:\n\tlocal_path={str(staged_path)}\n\tdep_in={dep_in}')
     dep = crud.create_deployment(
         db,
         dep_in,
@@ -152,7 +225,22 @@ def deploy_agent(
     if dep is None:
         raise HTTPException(status_code=500, detail="Failed to record deployment")
     return dep
+"""
 
+
+@app.delete("/deployments/{deployment_id}", status_code=204)
+def delete_deployment_endpoint(
+    deployment_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a deployment by its ID.
+    """
+    ok = crud.delete_deployment(db, deployment_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    # 204: No Content
+    return
 
 @app.get("/agents/{agent_id}/deployments", response_model=List[Deployment])
 def list_deployments_for_agent(
@@ -234,13 +322,64 @@ async def start_agent_instance(
     if agent_impl is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    if not req.location_name:
+        raise HTTPException(status_code=400, detail="location_name is required")
+
+    # 1. Find location object by name
+    loc = crud.find_location_by_name(db, req.location_name)
+    if loc is None:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    # 2. Find latest READY deployment for this agent and this location
+    print(
+        "DEBUG: start_agent_instance about to get deployment:",
+        "agent_id=", str(agent_id),
+        "location_name=", req.location_name,
+        "loc.id=", loc.id,
+    )
+
+    dep = crud.get_latest_ready_deployment(db, str(agent_id), loc.id)
+    print("DEBUG: get_latest_ready_deployment returned:", dep)
+    
+    if dep is None or not dep.local_path:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No ready deployment for agent {agent_id} on location {loc.name!r}",
+        )
+
+    # 3. Start instance from staged path
     try:
-        instance_id = await start_academy_instance(agent_impl)
+        instance_id = await start_academy_instance(agent_impl, Path(dep.local_path))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start instance: {e}") from e
+        raise HTTPException(status_code=500, detail=f"Failed to start instance: A {agent_impl} - {e}") from e
 
     return InstanceResponse(
         instance_id=instance_id,
         agent_id=str(agent_id),
         status="running",
     )
+
+from fastapi import HTTPException
+
+@app.post("/instances/{instance_id}/call", response_model=CallInstanceResponse)
+async def call_instance(
+    instance_id: str,
+    req: CallInstanceRequest,
+) -> CallInstanceResponse:
+    """
+    Call an action on a running instance.
+    """
+    try:
+        result = await call_instance_action(instance_id, req.action, req.payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Call failed: {e}") from e
+    return CallInstanceResponse(result=result)
+
+
+@app.post("/instances/{instance_id}/stop")
+async def stop_instance_endpoint(instance_id: str):
+    """
+    Stop a running instance.
+    """
+    await stop_instance(instance_id)
+    return {"status": "stopped"}

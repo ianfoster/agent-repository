@@ -70,8 +70,8 @@ class Location(LocationBase):
 class DeploymentBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    agent_id: UUID
-    location_id: UUID
+    agent_id: str
+    location_id: str
 
 
 class DeploymentCreate(DeploymentBase):
@@ -79,11 +79,11 @@ class DeploymentCreate(DeploymentBase):
 
 
 class Deployment(DeploymentBase):
-    id: UUID
+    id: str
     status: str
     last_error: Optional[str]
     local_path: Optional[str]
-    meta: Dict[str, Any]
+    meta: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -150,3 +150,18 @@ class InstanceResponse(BaseModel):
     instance_id: str
     agent_id: str
     status: str
+
+
+class CallInstanceRequest(BaseModel):
+    """
+    Request body to call an action on a running instance.
+    """
+    action: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CallInstanceResponse(BaseModel):
+    """
+    Response from calling an instance action.
+    """
+    result: Any

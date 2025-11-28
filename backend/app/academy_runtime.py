@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from pathlib import Path
+import sys
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -46,7 +47,10 @@ async def get_or_create_manager() -> RuntimeEnv:
   return _env
 
 
-async def start_academy_instance(agent_impl: AgentImplementation) -> str:
+async def start_academy_instance(
+    agent_impl: AgentImplementation,
+    staged_path: Path
+) -> str:
     """
     Launch an Academy-based agent instance from an AgentImplementation and return an instance_id.
 
@@ -61,6 +65,18 @@ async def start_academy_instance(agent_impl: AgentImplementation) -> str:
         raise RuntimeError(f"Invalid entrypoint {agent_impl.entrypoint!r}, expected 'module:Class'")
 
     module_path, class_name = agent_impl.entrypoint.split(":", 1)
+
+    repo_path = str(staged_path.resolve())
+    # DEBUG: print where we think we are
+    print("DEBUG start_academy_instance: staged_path =", repo_path)
+    print("DEBUG start_academy_instance: initial sys.path[0:3] =", sys.path[0:3])
+
+    if repo_path not in sys.path:
+        sys.path.insert(0, repo_path)
+
+    print("DEBUG start_academy_instance: updated sys.path[0:3] =", sys.path[0:3])
+    print("DEBUG start_academy_instance: trying import", module_path)
+
     module = importlib.import_module(module_path)
     agent_cls = getattr(module, class_name)
 
@@ -75,30 +91,34 @@ async def start_academy_instance(agent_impl: AgentImplementation) -> str:
 
 async def call_instance_action(instance_id: str, action: str, payload: Dict[str, Any]) -> Any:
     """
-    Call a named action on a running instance by ID.
-
-    This is a first sketch; you'd want better error handling and type checking later.
+    Call a named @action on a running instance.
     """
     env = await get_or_create_manager()
     handle = env.handles.get(instance_id)
     if handle is None:
         raise RuntimeError(f"No instance with id {instance_id!r}")
 
-    # For now, assume the action exists and returns an awaitable
-    method = getattr(handle, action)
+    # Get method from handle; we assume it corresponds to an @action name
+    method = getattr(handle, action, None)
+    if method is None:
+        raise RuntimeError(f"Instance {instance_id!r} has no action {action!r}")
+
+    # method returns an awaitable; await it and return the result
     result = await method(**payload)
     return result
 
 
 async def stop_instance(instance_id: str) -> None:
     """
-    Stop a running instance and forget its handle.
+    Stop a running instance.
+
+    For a thread-based / local exchange demo, we just drop the handle.
+    In a richer setup you might call manager.shutdown(handle).
     """
     env = await get_or_create_manager()
     handle = env.handles.pop(instance_id, None)
     if handle is None:
         return
 
-    # In a full implementation, you'd use env.manager.shutdown(handle)
-    # Here we just drop the reference and rely on process shutdown
-    # for the simple thread-based example.
+    # If the Manager supports explicit shutdown of a single handle, you
+    # could call that here. For now, we just forget the handle.

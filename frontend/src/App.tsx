@@ -107,6 +107,16 @@ const App: React.FC = () => {
   const [callActionName, setCallActionName] = useState("greet");
   const [callPayloadJson, setCallPayloadJson] = useState<string>("{}");
 
+  const readyInstanceLocations = deployments
+    .filter((d) => d.agent_id === instanceAgentId && d.status === "ready")
+    .map((d) => {
+      const loc = locations.find((l) => l.id === d.location_id);
+      return {
+        locationName: loc ? loc.name : d.location_id,
+        label: loc ? `${loc.name} (${loc.location_type})` : d.location_id,
+      };
+    });
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -191,6 +201,12 @@ const App: React.FC = () => {
     loadAgents();
     loadLocations();
   }, []);
+
+  // When agents list changes, reset selected agent and location
+  useEffect(() => {
+    setInstanceAgentId("");
+    setInstanceLocationName("");
+  }, [agents]);
 
   // Reload deployments when selected deployAgentId changes
   useEffect(() => {

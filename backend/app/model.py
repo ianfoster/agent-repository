@@ -84,41 +84,6 @@ class Location(Base):
     )
 
 
-class Deployment(Base):
-    """
-    Deployment = relationship between AgentImplementation and Location.
-
-    Represents code/env staged to a specific location.
-    """
-    __tablename__ = "deployments"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(ForeignKey("agent_implementations.id"))
-    location_id: Mapped[str] = mapped_column(ForeignKey("locations.id"))
-
-    # e.g., requested | staging | ready | failed | deleted
-    status: Mapped[str] = mapped_column(String(32), default="requested")
-    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    # For local targets, where code is staged on disk
-    local_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-
-    # For remote targets, container image / job ID info could go here
-    metadata: Mapped[dict] = mapped_column(JSON, default=dict)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    agent: Mapped[AgentImplementation] = relationship(back_populates="deployments")
-    location: Mapped[Location] = relationship(back_populates="deployments")
-
-    instances: Mapped[list["AgentInstance"]] = relationship(
-        back_populates="deployment", cascade="all, delete-orphan"
-    )
-
-
 class AgentInstance(Base):
     """
     Running agent (C): a live instance started from a Deployment at a Location.

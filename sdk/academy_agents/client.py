@@ -77,6 +77,31 @@ class AgentClient:
         r.raise_for_status()
         return r.json()
 
+    def find_agent_by_name(
+        self,
+        name: str,
+        version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Find a single agent by name (and optional version).
+
+        Used by `academy-agents show <name>`.
+        """
+        agents = self.list_agents(name=name)
+
+        if version is not None:
+            agents = [a for a in agents if a.get("version") == version]
+
+        if not agents:
+            raise ValueError(f"No agent found with name={name!r} and version={version!r}")
+
+        if len(agents) > 1:
+            # If multiple, pick the latest by created_at or just the first; here we pick first for simplicity
+            # You can refine this later.
+            return agents[0]
+
+        return agents[0]
+
     def get_agent(self, agent_id: str) -> Dict[str, Any]:
         r = self._get(f"/agents/{agent_id}")
         r.raise_for_status()
